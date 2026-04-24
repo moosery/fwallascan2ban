@@ -1,0 +1,39 @@
+[Unit]
+Description=fwallascan2ban - Firewalla log scanner and IP banner
+Documentation=https://github.com/yourrepo/fwallascan2ban
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/fwallascan2ban -c /etc/fwallascan2ban/fwallascan2ban.conf
+Restart=on-failure
+RestartSec=10s
+
+# Load credentials from environment file
+# This file must be chmod 600 and contain:
+#   FW_MSP_DOMAIN=yourname.firewalla.net
+#   FW_MSP_TOKEN=your_personal_access_token
+EnvironmentFile=/etc/fwallascan2ban/fwallascan2ban.env
+
+# Runtime directory for Unix socket
+RuntimeDirectory=fwallascan2ban
+RuntimeDirectoryMode=0755
+
+# State directory for banned.db
+StateDirectory=fwallascan2ban
+StateDirectoryMode=0755
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fwallascan2ban
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/fwallascan2ban /run/fwallascan2ban
+
+[Install]
+WantedBy=multi-user.target
