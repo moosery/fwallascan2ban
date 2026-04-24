@@ -1,6 +1,6 @@
 [Unit]
 Description=fwallascan2ban - Firewalla log scanner and IP banner
-Documentation=https://github.com/yourrepo/fwallascan2ban
+Documentation=https://github.com/moosery/fwallascan2ban
 After=network-online.target
 Wants=network-online.target
 
