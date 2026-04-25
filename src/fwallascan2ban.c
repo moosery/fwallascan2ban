@@ -857,8 +857,12 @@ static void run_main_loop(DaemonState *state)
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(state->server_sock, &read_fds);
+        if (state->logmon.inotify_fd >= 0)
+            FD_SET(state->logmon.inotify_fd, &read_fds);
 
         int max_fd = state->server_sock;
+        if (state->logmon.inotify_fd > max_fd)
+            max_fd = state->logmon.inotify_fd;
 
         struct timeval tv;
         tv.tv_sec  = 1;
