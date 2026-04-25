@@ -248,13 +248,11 @@ int logmon_rescan(LogmonState *state, bool from_beginning)
         return -1;
     }
 
-    printf("logmon: rescan found newest file: '%s'\n", newest);
-
-    /* If same file and not from_beginning, just continue */
-    if (strcmp(newest, state->current_path) == 0 && !from_beginning) {
-        printf("logmon: already monitoring newest file\n");
+    /* If same file and not from_beginning, just continue silently */
+    if (strcmp(newest, state->current_path) == 0 && !from_beginning)
         return 0;
-    }
+
+    printf("logmon: rescan switching to '%s'\n", newest);
 
     /* Drain remaining lines from current file first */
     if (state->log_fp != NULL)
