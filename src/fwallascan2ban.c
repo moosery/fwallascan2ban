@@ -545,11 +545,11 @@ static void handle_client_banned_by_date(DaemonState *state,
         }
     }
 
-    /* Sort by timestamp descending (newest first) - lexicographic works
-     * since timestamps are in YYYY-MM-DD HH:MM:SS format */
+    /* Sort by timestamp ascending (oldest first, newest last) - lexicographic
+     * works since timestamps are in YYYY-MM-DD HH:MM:SS format */
     for (int i = 0; i < count - 1; i++) {
         for (int j = i + 1; j < count; j++) {
-            if (strcmp(entries[i].timestamp, entries[j].timestamp) < 0) {
+            if (strcmp(entries[i].timestamp, entries[j].timestamp) > 0) {
                 BannedEntry tmp = entries[i];
                 entries[i] = entries[j];
                 entries[j] = tmp;
@@ -559,7 +559,7 @@ static void handle_client_banned_by_date(DaemonState *state,
 
     size_t pos = 0;
     pos += (size_t)snprintf(resp + pos, resp_len - pos,
-        "Banned IPs (sorted by date, newest first)\n"
+        "Banned IPs (sorted by date, oldest first)\n"
         "----------------------------------------\n");
 
     for (int i = 0; i < count && pos < resp_len; i++) {
