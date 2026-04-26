@@ -123,7 +123,8 @@ The `fwallascan2ban-client` tool communicates with the running daemon over a Uni
 | Command | Description |
 |---|---|
 | `fwallascan2ban-client status` | Daemon status, uptime, target list inventory, pending IPs |
-| `fwallascan2ban-client banned` | All banned IPs with source tag and timestamp |
+| `fwallascan2ban-client banned` | All banned IPs with source tag and timestamp, grouped by list |
+| `fwallascan2ban-client banned --sort-date` | All banned IPs sorted by date, newest first |
 | `fwallascan2ban-client pending` | IPs that have matched patterns but not yet reached maxretry |
 | `fwallascan2ban-client ban <ip>` | Manually ban an IP immediately |
 | `fwallascan2ban-client unban <ip>` | Remove a banned IP from Firewalla and local db |
