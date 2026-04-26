@@ -420,11 +420,33 @@ static bool add_ip_to_list(FwTargetList *list, const char *ip)
 }
 
 /*
+ * compare_ips - qsort comparator for FwIP entries by numeric IPv4 value.
+ */
+static int compare_ips(const void *a, const void *b)
+{
+    const FwIP *ia = (const FwIP *)a;
+    const FwIP *ib = (const FwIP *)b;
+    unsigned int a1, a2, a3, a4, b1, b2, b3, b4;
+
+    if (sscanf(ia->ip, "%u.%u.%u.%u", &a1, &a2, &a3, &a4) != 4 ||
+        sscanf(ib->ip, "%u.%u.%u.%u", &b1, &b2, &b3, &b4) != 4)
+        return strcmp(ia->ip, ib->ip);
+
+    if (a1 != b1) return (int)a1 - (int)b1;
+    if (a2 != b2) return (int)a2 - (int)b2;
+    if (a3 != b3) return (int)a3 - (int)b3;
+    return (int)a4 - (int)b4;
+}
+
+/*
  * patch_target_list - PATCH the current in-memory state of a target list
  * back to Firewalla.
  */
 static int patch_target_list(FwClient *client, FwTargetList *list)
 {
+    /* Sort IPs numerically before sending */
+    qsort(list->ips, (size_t)list->ip_count, sizeof(FwIP), compare_ips);
+
     /* Build targets JSON array */
     char targets_json[FW_MAX_IPS_PER_LIST * (FW_MAX_IP_LEN + 4)];
     if (build_targets_json(list, targets_json, sizeof(targets_json)) != 0) {

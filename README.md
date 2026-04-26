@@ -146,6 +146,15 @@ Each entry in the banned list carries a source tag:
 | `firewalla` | Found in Firewalla target list but not in local db (added externally via MSP portal or mobile app) |
 | `placeholder` | Placeholder IP keeping an otherwise empty list alive (never a real ban) |
 
+## Coexistence with Firewalla's Own Block Rules
+
+Firewalla's threat intelligence may independently create individual IP block rules (type `ip`) for the same addresses that fwallascan2ban manages via its target list. These are separate mechanisms and coexist without conflict — an IP blocked by both is simply double-blocked, which is harmless.
+
+Two things to be aware of:
+
+- **Reconciliation** — `fw_ip_is_banned()` checks only the managed target lists, not individual Firewalla rules. If an IP has a Firewalla-added individual rule but is not in the target list, reconciliation may re-add it to the target list. This is redundant but harmless.
+- **Unbanning** — `fwallascan2ban-client unban <ip>` removes the IP from the target list and local db, but any individual Firewalla block rule for the same IP is not touched. The IP will remain blocked at the Firewalla level until that rule is removed manually via the MSP portal.
+
 ## Files
 
 | Path | Description |
