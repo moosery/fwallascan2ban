@@ -3,7 +3,7 @@
 # =============================================================================
 
 CC      = gcc
-CFLAGS  = -Wall -Wextra -Wpedantic -g -I./include
+CFLAGS  = -Wall -Wextra -Wpedantic -g -D_GNU_SOURCE -I./include
 LDFLAGS = -lcurl -lpcre2-8
 
 SRCDIR  = src

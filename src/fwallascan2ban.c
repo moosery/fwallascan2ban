@@ -243,7 +243,7 @@ static int db_add(DaemonState *state, const char *ip,
         existing->active = true;
 
         time_t now = time(NULL);
-        struct tm *tm = localtime(&now);
+        struct tm *tm = gmtime(&now);
         strftime(existing->timestamp, sizeof(existing->timestamp),
                  "%Y-%m-%d %H:%M:%S", tm);
         return 0;
@@ -256,7 +256,7 @@ static int db_add(DaemonState *state, const char *ip,
     e->active = true;
 
     time_t now = time(NULL);
-    struct tm *tm_info = localtime(&now);
+    struct tm *tm_info = gmtime(&now);
     strftime(e->timestamp, sizeof(e->timestamp),
              "%Y-%m-%d %H:%M:%S", tm_info);
 
@@ -433,6 +433,32 @@ static void handle_client_status(DaemonState *state,
 }
 
 /*
+ * format_timestamp - Convert a stored UTC timestamp string into a dual-timezone
+ * display string: "YYYY-MM-DD HH:MM:SS TZ (YYYY-MM-DD HH:MM:SS UTC)".
+ * Falls back to the raw UTC string if parsing fails.
+ * out must be at least 80 bytes.
+ */
+static void format_timestamp(const char *utc_str, char *out, size_t out_len)
+{
+    struct tm tm_utc;
+    memset(&tm_utc, 0, sizeof(tm_utc));
+
+    if (strptime(utc_str, "%Y-%m-%d %H:%M:%S", &tm_utc) == NULL) {
+        strncpy(out, utc_str, out_len - 1);
+        out[out_len - 1] = '\0';
+        return;
+    }
+
+    time_t t = timegm(&tm_utc);
+
+    struct tm *local = localtime(&t);
+    char local_str[40];
+    strftime(local_str, sizeof(local_str), "%Y-%m-%d %H:%M:%S %Z", local);
+
+    snprintf(out, out_len, "%s (%s UTC)", local_str, utc_str);
+}
+
+/*
  * handle_client_banned - Build banned list response string.
  */
 static void handle_client_banned(DaemonState *state,
@@ -461,10 +487,12 @@ static void handle_client_banned(DaemonState *state,
             /* Find db entry for metadata */
             DbEntry *e = db_find(state, ip);
             const char *source = e ? e->source : BAN_SOURCE_FIREWALLA;
-            const char *ts     = e ? e->timestamp : "unknown";
 
             if (is_placeholder)
                 source = BAN_SOURCE_PLACEHOLDER;
+
+            char ts[80];
+            format_timestamp(e ? e->timestamp : "unknown", ts, sizeof(ts));
 
             pos += (size_t)snprintf(resp + pos, resp_len - pos,
                 "  %-20s [%-11s] %s\n", ip, source, ts);
@@ -535,9 +563,11 @@ static void handle_client_banned_by_date(DaemonState *state,
         "----------------------------------------\n");
 
     for (int i = 0; i < count && pos < resp_len; i++) {
+        char ts[80];
+        format_timestamp(entries[i].timestamp, ts, sizeof(ts));
         pos += (size_t)snprintf(resp + pos, resp_len - pos,
             "  %-20s [%-11s] %s\n",
-            entries[i].ip, entries[i].source, entries[i].timestamp);
+            entries[i].ip, entries[i].source, ts);
     }
 
     pos += (size_t)snprintf(resp + pos, resp_len - pos,
