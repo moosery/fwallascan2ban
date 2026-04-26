@@ -1198,7 +1198,23 @@ int fw_reconcile(FwClient *client, const Config *config,
     }
 
     /* -------------------------------------------------------------------------
-     * Step 7: Update total IP count
+     * Step 7: Sort any lists that are out of order
+     * --------------------------------------------------------------------- */
+    for (int li = 0; li < client->list_count; li++) {
+        FwTargetList *list = &client->lists[li].list;
+        bool sorted = true;
+        for (int ii = 1; ii < list->ip_count; ii++) {
+            if (compare_ips(&list->ips[ii - 1], &list->ips[ii]) > 0) {
+                sorted = false;
+                break;
+            }
+        }
+        if (!sorted)
+            patch_target_list(client, list);
+    }
+
+    /* -------------------------------------------------------------------------
+     * Step 8: Update total IP count
      * --------------------------------------------------------------------- */
     client->total_ips = 0;
     for (int li = 0; li < client->list_count; li++)
