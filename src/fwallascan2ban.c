@@ -483,6 +483,69 @@ static void handle_client_banned(DaemonState *state,
 }
 
 /*
+ * handle_client_banned_by_date - Build banned list sorted by timestamp.
+ */
+static void handle_client_banned_by_date(DaemonState *state,
+                                          char *resp, size_t resp_len)
+{
+    /* Collect all non-placeholder banned IPs with metadata */
+    typedef struct {
+        char ip[FW_MAX_IP_LEN];
+        char source[32];
+        char timestamp[32];
+    } BannedEntry;
+
+    BannedEntry entries[DB_MAX_IPS];
+    int count = 0;
+
+    for (int li = 0; li < state->firewalla.list_count; li++) {
+        const FwTargetList *list = &state->firewalla.lists[li].list;
+        for (int ii = 0; ii < list->ip_count; ii++) {
+            const char *ip = list->ips[ii].ip;
+            if (strcmp(ip, state->config.target_list.placeholder_ip) == 0)
+                continue;
+            if (count >= DB_MAX_IPS)
+                break;
+
+            DbEntry *e = db_find(state, ip);
+            strncpy(entries[count].ip, ip, FW_MAX_IP_LEN - 1);
+            strncpy(entries[count].source,
+                    e ? e->source : BAN_SOURCE_FIREWALLA, 31);
+            strncpy(entries[count].timestamp,
+                    e ? e->timestamp : "unknown", 31);
+            count++;
+        }
+    }
+
+    /* Sort by timestamp descending (newest first) - lexicographic works
+     * since timestamps are in YYYY-MM-DD HH:MM:SS format */
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (strcmp(entries[i].timestamp, entries[j].timestamp) < 0) {
+                BannedEntry tmp = entries[i];
+                entries[i] = entries[j];
+                entries[j] = tmp;
+            }
+        }
+    }
+
+    size_t pos = 0;
+    pos += (size_t)snprintf(resp + pos, resp_len - pos,
+        "Banned IPs (sorted by date, newest first)\n"
+        "----------------------------------------\n");
+
+    for (int i = 0; i < count && pos < resp_len; i++) {
+        pos += (size_t)snprintf(resp + pos, resp_len - pos,
+            "  %-20s [%-11s] %s\n",
+            entries[i].ip, entries[i].source, entries[i].timestamp);
+    }
+
+    pos += (size_t)snprintf(resp + pos, resp_len - pos,
+        "\nTotal banned: %d\n", count);
+    (void)pos;
+}
+
+/*
  * handle_client_pending - Build pending IPs response string.
  */
 static void handle_client_pending(DaemonState *state,
@@ -599,6 +662,9 @@ static void handle_client_connection(DaemonState *state, int client_fd)
 
     } else if (strcmp(cmd, "banned") == 0) {
         handle_client_banned(state, response, MAX_RESPONSE_LEN);
+
+    } else if (strcmp(cmd, "banned-date") == 0) {
+        handle_client_banned_by_date(state, response, MAX_RESPONSE_LEN);
 
     } else if (strcmp(cmd, "pending") == 0) {
         handle_client_pending(state, response, MAX_RESPONSE_LEN);

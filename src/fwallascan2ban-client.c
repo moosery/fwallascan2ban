@@ -19,6 +19,7 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -41,6 +42,7 @@ static void print_usage(const char *prog)
     printf("Commands:\n");
     printf("  status          Show daemon status, statistics, and pending IPs\n");
     printf("  banned          List all banned IPs across all target lists\n");
+    printf("  banned --sort-date  List banned IPs sorted by date (newest first)\n");
     printf("  pending         List IPs approaching the ban threshold\n");
     printf("  ban <ip>        Manually ban an IP address immediately\n");
     printf("  unban <ip>      Remove a banned IP from the target list\n");
@@ -168,7 +170,8 @@ int main(int argc, char *argv[])
         return send_command("status") == 0 ? 0 : 1;
 
     } else if (strcmp(command, "banned") == 0) {
-        return send_command("banned") == 0 ? 0 : 1;
+        bool sort_date = (argc >= 3 && strcmp(argv[2], "--sort-date") == 0);
+        return send_command(sort_date ? "banned-date" : "banned") == 0 ? 0 : 1;
 
     } else if (strcmp(command, "pending") == 0) {
         return send_command("pending") == 0 ? 0 : 1;
