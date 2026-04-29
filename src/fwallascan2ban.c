@@ -954,8 +954,29 @@ static void run_main_loop(DaemonState *state)
         /* Check for reload request */
         if (g_reload_requested) {
             g_reload_requested = 0;
-            printf("fwallascan2ban: reloading config...\n");
-            /* Re-run reconciliation on reload */
+            printf("fwallascan2ban: reloading config from %s\n",
+                   state->config.config_path);
+
+            Config new_config;
+            if (config_load(state->config.config_path, &new_config) == 0) {
+                /* Re-init filter engine with new patterns */
+                filter_free(&state->filter);
+                if (filter_init(&state->filter, &new_config) == 0) {
+                    state->config = new_config;
+                    printf("fwallascan2ban: config reloaded, "
+                           "%d failregex patterns active\n",
+                           state->config.filters.failregex_count);
+                } else {
+                    fprintf(stderr, "fwallascan2ban: filter_init failed "
+                            "after reload, keeping old config\n");
+                    filter_init(&state->filter, &state->config);
+                }
+            } else {
+                fprintf(stderr, "fwallascan2ban: config_load failed, "
+                        "keeping old config\n");
+            }
+
+            /* Re-run reconciliation after reload */
             int db_ip_count = db_get_active_ips(state, db_ips, DB_MAX_IPS);
             FwReconcileReport report;
             fw_reconcile(&state->firewalla, &state->config,
