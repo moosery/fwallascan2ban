@@ -447,15 +447,15 @@ static int patch_target_list(FwClient *client, FwTargetList *list)
     /* Sort IPs numerically before sending */
     qsort(list->ips, (size_t)list->ip_count, sizeof(FwIP), compare_ips);
 
-    /* Build targets JSON array */
-    char targets_json[FW_MAX_IPS_PER_LIST * (FW_MAX_IP_LEN + 4)];
+    /* Build targets JSON array — static to avoid large stack allocation */
+    static char targets_json[FW_MAX_IPS_PER_LIST * (FW_MAX_IP_LEN + 4)];
     if (build_targets_json(list, targets_json, sizeof(targets_json)) != 0) {
         fprintf(stderr, "firewalla: failed to build targets JSON\n");
         return -1;
     }
 
     /* Build full PATCH body */
-    char body[FW_MAX_IPS_PER_LIST * (FW_MAX_IP_LEN + 4) + 256];
+    static char body[FW_MAX_IPS_PER_LIST * (FW_MAX_IP_LEN + 4) + 256];
     snprintf(body, sizeof(body),
              "{\"targets\": %s}", targets_json);
 

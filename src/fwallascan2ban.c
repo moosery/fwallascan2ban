@@ -646,6 +646,7 @@ static int do_ban_ip(DaemonState *state, const char *ip, const char *source)
 
     if (result.already_banned) {
         printf("ban: %s already banned\n", ip);
+        filter_mark_banned(&state->filter, ip);
         return 0;
     }
 
@@ -957,11 +958,13 @@ static void run_main_loop(DaemonState *state)
             printf("fwallascan2ban: reloading config from %s\n",
                    state->config.config_path);
 
-            Config new_config;
+            static Config new_config;
             if (config_load(state->config.config_path, &new_config) == 0) {
                 /* Re-init filter engine with new patterns */
                 filter_free(&state->filter);
                 if (filter_init(&state->filter, &new_config) == 0) {
+                    ignore_free(&state->ignore);
+                    ignore_init(&state->ignore, &new_config);
                     state->config = new_config;
                     printf("fwallascan2ban: config reloaded, "
                            "%d failregex patterns active\n",
@@ -982,6 +985,18 @@ static void run_main_loop(DaemonState *state)
             fw_reconcile(&state->firewalla, &state->config,
                          db_ips, db_ip_count, &report);
             state->last_reconcile = time(NULL);
+
+            /* Re-seed filter with already-banned IPs so they aren't re-queued */
+            static FwIP reload_banned_ips[DB_MAX_IPS];
+            static char reload_banned_list_ids[DB_MAX_IPS][FW_MAX_ID_LEN];
+            int reload_banned_count = fw_get_all_banned_ips(
+                &state->firewalla, reload_banned_ips,
+                DB_MAX_IPS, reload_banned_list_ids);
+            static const char *reload_banned_ptrs[DB_MAX_IPS];
+            for (int i = 0; i < reload_banned_count; i++)
+                reload_banned_ptrs[i] = reload_banned_ips[i].ip;
+            filter_mark_banned_bulk(&state->filter,
+                                    reload_banned_ptrs, reload_banned_count);
         }
 
         /* Check periodic reconciliation */
