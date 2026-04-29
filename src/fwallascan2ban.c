@@ -576,6 +576,33 @@ static void handle_client_banned_by_date(DaemonState *state,
 }
 
 /*
+ * handle_client_rules - Show active failregex patterns from config.
+ */
+static void handle_client_rules(DaemonState *state,
+                                 char *resp, size_t resp_len)
+{
+    int count = state->config.filters.failregex_count;
+    size_t pos = 0;
+
+    pos += (size_t)snprintf(resp + pos, resp_len - pos,
+        "Active scan rules (%d pattern%s, maxretry=%d)\n"
+        "----------------------------------------\n",
+        count, count == 1 ? "" : "s",
+        state->config.monitor.maxretry);
+
+    for (int i = 0; i < count && pos < resp_len; i++) {
+        pos += (size_t)snprintf(resp + pos, resp_len - pos,
+            "  [%d] %s\n", i + 1, state->config.filters.failregex[i]);
+    }
+
+    if (count == 0)
+        pos += (size_t)snprintf(resp + pos, resp_len - pos,
+            "  No patterns configured.\n");
+
+    (void)pos;
+}
+
+/*
  * handle_client_pending - Build pending IPs response string.
  */
 static void handle_client_pending(DaemonState *state,
@@ -699,6 +726,9 @@ static void handle_client_connection(DaemonState *state, int client_fd)
     } else if (strcmp(cmd, "pending") == 0) {
         handle_client_pending(state, response, MAX_RESPONSE_LEN);
 
+    } else if (strcmp(cmd, "rules") == 0) {
+        handle_client_rules(state, response, MAX_RESPONSE_LEN);
+
     } else if (strncmp(cmd, "ban ", 4) == 0) {
         const char *ip = cmd + 4;
         if (do_ban_ip(state, ip, BAN_SOURCE_MANUAL) == 0)
@@ -731,7 +761,7 @@ static void handle_client_connection(DaemonState *state, int client_fd)
     } else {
         snprintf(response, MAX_RESPONSE_LEN,
                  "ERROR: unknown command '%s'\n"
-                 "Commands: status, banned, pending, "
+                 "Commands: status, banned, pending, rules, "
                  "ban <ip>, unban <ip>, reload\n", cmd);
     }
 
