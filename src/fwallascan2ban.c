@@ -506,6 +506,32 @@ static void handle_client_banned(DaemonState *state,
         pos += (size_t)snprintf(resp + pos, resp_len - pos, "\n");
     }
 
+    /* Show IPs tracked as blocked by Firewalla individual rules */
+    int fw_rule_count = 0;
+    for (int i = 0; i < state->db_count; i++) {
+        if (strcmp(state->db[i].source, BAN_SOURCE_FW_RULE) == 0 &&
+            state->db[i].active)
+            fw_rule_count++;
+    }
+
+    if (fw_rule_count > 0) {
+        pos += (size_t)snprintf(resp + pos, resp_len - pos,
+            "Blocked by Firewalla individual rules (%d)\n"
+            "----------------------------------------\n",
+            fw_rule_count);
+        for (int i = 0; i < state->db_count && pos < resp_len; i++) {
+            DbEntry *e = &state->db[i];
+            if (strcmp(e->source, BAN_SOURCE_FW_RULE) != 0 || !e->active)
+                continue;
+            char ts[80];
+            format_timestamp(e->timestamp, ts, sizeof(ts));
+            pos += (size_t)snprintf(resp + pos, resp_len - pos,
+                "  %-20s [%-11s] %s\n", e->ip, e->source, ts);
+            total++;
+        }
+        pos += (size_t)snprintf(resp + pos, resp_len - pos, "\n");
+    }
+
     pos += (size_t)snprintf(resp + pos, resp_len - pos,
         "Total banned: %d across %d list(s)\n",
         total, state->firewalla.list_count);
@@ -545,6 +571,17 @@ static void handle_client_banned_by_date(DaemonState *state,
                     e ? e->timestamp : "unknown", 31);
             count++;
         }
+    }
+
+    /* Also include IPs tracked as blocked by Firewalla individual rules */
+    for (int i = 0; i < state->db_count && count < DB_MAX_IPS; i++) {
+        DbEntry *e = &state->db[i];
+        if (strcmp(e->source, BAN_SOURCE_FW_RULE) != 0 || !e->active)
+            continue;
+        strncpy(entries[count].ip, e->ip, FW_MAX_IP_LEN - 1);
+        strncpy(entries[count].source, e->source, 31);
+        strncpy(entries[count].timestamp, e->timestamp, 31);
+        count++;
     }
 
     /* Sort by timestamp ascending (oldest first, newest last) - lexicographic
