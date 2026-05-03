@@ -43,6 +43,8 @@ static void print_usage(const char *prog)
     printf("  status          Show daemon status, statistics, and pending IPs\n");
     printf("  banned          List all banned IPs across all target lists\n");
     printf("  banned --sort-date  List banned IPs sorted by date (oldest first)\n");
+    printf("  banned --fw-rules   Include IPs blocked by Firewalla individual rules\n");
+    printf("  banned --sort-date --fw-rules  Both options combined\n");
     printf("  pending         List IPs approaching the ban threshold\n");
     printf("  rules           Show active failregex scan patterns\n");
     printf("  ban <ip>        Manually ban an IP address immediately\n");
@@ -171,8 +173,16 @@ int main(int argc, char *argv[])
         return send_command("status") == 0 ? 0 : 1;
 
     } else if (strcmp(command, "banned") == 0) {
-        bool sort_date = (argc >= 3 && strcmp(argv[2], "--sort-date") == 0);
-        return send_command(sort_date ? "banned-date" : "banned") == 0 ? 0 : 1;
+        bool sort_date = false;
+        bool fw_rules  = false;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--sort-date") == 0) sort_date = true;
+            else if (strcmp(argv[i], "--fw-rules") == 0) fw_rules  = true;
+        }
+        const char *subcmd = sort_date
+            ? (fw_rules ? "banned-date-fw" : "banned-date")
+            : (fw_rules ? "banned-fw"      : "banned");
+        return send_command(subcmd) == 0 ? 0 : 1;
 
     } else if (strcmp(command, "pending") == 0) {
         return send_command("pending") == 0 ? 0 : 1;

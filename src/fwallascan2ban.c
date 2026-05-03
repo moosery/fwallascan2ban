@@ -464,7 +464,8 @@ static void format_timestamp(const char *utc_str, char *out, size_t out_len)
  * handle_client_banned - Build banned list response string.
  */
 static void handle_client_banned(DaemonState *state,
-                                  char *resp, size_t resp_len)
+                                  char *resp, size_t resp_len,
+                                  bool include_fw_rules)
 {
     size_t pos = 0;
     int    total = 0;
@@ -482,11 +483,9 @@ static void handle_client_banned(DaemonState *state,
         for (int ii = 0; ii < ml->list.ip_count && pos < resp_len; ii++) {
             const char *ip = ml->list.ips[ii].ip;
 
-            /* Skip placeholder in count */
             bool is_placeholder = (strcmp(ip,
                 state->config.target_list.placeholder_ip) == 0);
 
-            /* Find db entry for metadata */
             DbEntry *e = db_find(state, ip);
             const char *source = e ? e->source : BAN_SOURCE_FIREWALLA;
 
@@ -506,30 +505,31 @@ static void handle_client_banned(DaemonState *state,
         pos += (size_t)snprintf(resp + pos, resp_len - pos, "\n");
     }
 
-    /* Show IPs tracked as blocked by Firewalla individual rules */
-    int fw_rule_count = 0;
-    for (int i = 0; i < state->db_count; i++) {
-        if (strcmp(state->db[i].source, BAN_SOURCE_FW_RULE) == 0 &&
-            state->db[i].active)
-            fw_rule_count++;
-    }
-
-    if (fw_rule_count > 0) {
-        pos += (size_t)snprintf(resp + pos, resp_len - pos,
-            "Blocked by Firewalla individual rules (%d)\n"
-            "----------------------------------------\n",
-            fw_rule_count);
-        for (int i = 0; i < state->db_count && pos < resp_len; i++) {
-            DbEntry *e = &state->db[i];
-            if (strcmp(e->source, BAN_SOURCE_FW_RULE) != 0 || !e->active)
-                continue;
-            char ts[80];
-            format_timestamp(e->timestamp, ts, sizeof(ts));
-            pos += (size_t)snprintf(resp + pos, resp_len - pos,
-                "  %-20s [%-11s] %s\n", e->ip, e->source, ts);
-            total++;
+    if (include_fw_rules) {
+        int fw_rule_count = 0;
+        for (int i = 0; i < state->db_count; i++) {
+            if (strcmp(state->db[i].source, BAN_SOURCE_FW_RULE) == 0 &&
+                state->db[i].active)
+                fw_rule_count++;
         }
-        pos += (size_t)snprintf(resp + pos, resp_len - pos, "\n");
+
+        if (fw_rule_count > 0) {
+            pos += (size_t)snprintf(resp + pos, resp_len - pos,
+                "Blocked by Firewalla individual rules (%d)\n"
+                "----------------------------------------\n",
+                fw_rule_count);
+            for (int i = 0; i < state->db_count && pos < resp_len; i++) {
+                DbEntry *e = &state->db[i];
+                if (strcmp(e->source, BAN_SOURCE_FW_RULE) != 0 || !e->active)
+                    continue;
+                char ts[80];
+                format_timestamp(e->timestamp, ts, sizeof(ts));
+                pos += (size_t)snprintf(resp + pos, resp_len - pos,
+                    "  %-20s [%-11s] %s\n", e->ip, e->source, ts);
+                total++;
+            }
+            pos += (size_t)snprintf(resp + pos, resp_len - pos, "\n");
+        }
     }
 
     pos += (size_t)snprintf(resp + pos, resp_len - pos,
@@ -542,16 +542,17 @@ static void handle_client_banned(DaemonState *state,
  * handle_client_banned_by_date - Build banned list sorted by timestamp.
  */
 static void handle_client_banned_by_date(DaemonState *state,
-                                          char *resp, size_t resp_len)
+                                          char *resp, size_t resp_len,
+                                          bool include_fw_rules)
 {
-    /* Collect all non-placeholder banned IPs with metadata */
     typedef struct {
         char ip[FW_MAX_IP_LEN];
         char source[32];
         char timestamp[32];
     } BannedEntry;
 
-    BannedEntry entries[DB_MAX_IPS];
+    /* Collect target-list IPs — static to avoid large stack allocation */
+    static BannedEntry entries[DB_MAX_IPS];
     int count = 0;
 
     for (int li = 0; li < state->firewalla.list_count; li++) {
@@ -573,19 +574,7 @@ static void handle_client_banned_by_date(DaemonState *state,
         }
     }
 
-    /* Also include IPs tracked as blocked by Firewalla individual rules */
-    for (int i = 0; i < state->db_count && count < DB_MAX_IPS; i++) {
-        DbEntry *e = &state->db[i];
-        if (strcmp(e->source, BAN_SOURCE_FW_RULE) != 0 || !e->active)
-            continue;
-        strncpy(entries[count].ip, e->ip, FW_MAX_IP_LEN - 1);
-        strncpy(entries[count].source, e->source, 31);
-        strncpy(entries[count].timestamp, e->timestamp, 31);
-        count++;
-    }
-
-    /* Sort by timestamp ascending (oldest first, newest last) - lexicographic
-     * works since timestamps are in YYYY-MM-DD HH:MM:SS format */
+    /* Sort target-list IPs by timestamp ascending (oldest first) */
     for (int i = 0; i < count - 1; i++) {
         for (int j = i + 1; j < count; j++) {
             if (strcmp(entries[i].timestamp, entries[j].timestamp) > 0) {
@@ -609,8 +598,53 @@ static void handle_client_banned_by_date(DaemonState *state,
             entries[i].ip, entries[i].source, ts);
     }
 
+    int total = count;
+
+    if (include_fw_rules) {
+        /* Collect fw-rule IPs separately — static to avoid large stack allocation */
+        static BannedEntry fw_entries[DB_MAX_IPS];
+        int fw_count = 0;
+
+        for (int i = 0; i < state->db_count && fw_count < DB_MAX_IPS; i++) {
+            DbEntry *e = &state->db[i];
+            if (strcmp(e->source, BAN_SOURCE_FW_RULE) != 0 || !e->active)
+                continue;
+            strncpy(fw_entries[fw_count].ip, e->ip, FW_MAX_IP_LEN - 1);
+            strncpy(fw_entries[fw_count].source, e->source, 31);
+            strncpy(fw_entries[fw_count].timestamp, e->timestamp, 31);
+            fw_count++;
+        }
+
+        /* Sort fw-rule IPs by timestamp ascending */
+        for (int i = 0; i < fw_count - 1; i++) {
+            for (int j = i + 1; j < fw_count; j++) {
+                if (strcmp(fw_entries[i].timestamp,
+                           fw_entries[j].timestamp) > 0) {
+                    BannedEntry tmp = fw_entries[i];
+                    fw_entries[i] = fw_entries[j];
+                    fw_entries[j] = tmp;
+                }
+            }
+        }
+
+        if (fw_count > 0) {
+            pos += (size_t)snprintf(resp + pos, resp_len - pos,
+                "\nBlocked by Firewalla individual rules (%d, oldest first)\n"
+                "----------------------------------------\n",
+                fw_count);
+            for (int i = 0; i < fw_count && pos < resp_len; i++) {
+                char ts[80];
+                format_timestamp(fw_entries[i].timestamp, ts, sizeof(ts));
+                pos += (size_t)snprintf(resp + pos, resp_len - pos,
+                    "  %-20s [%-11s] %s\n",
+                    fw_entries[i].ip, fw_entries[i].source, ts);
+            }
+            total += fw_count;
+        }
+    }
+
     pos += (size_t)snprintf(resp + pos, resp_len - pos,
-        "\nTotal banned: %d\n", count);
+        "\nTotal banned: %d\n", total);
     (void)pos;
 }
 
@@ -785,10 +819,16 @@ static void handle_client_connection(DaemonState *state, int client_fd)
         handle_client_status(state, response, MAX_RESPONSE_LEN);
 
     } else if (strcmp(cmd, "banned") == 0) {
-        handle_client_banned(state, response, MAX_RESPONSE_LEN);
+        handle_client_banned(state, response, MAX_RESPONSE_LEN, false);
+
+    } else if (strcmp(cmd, "banned-fw") == 0) {
+        handle_client_banned(state, response, MAX_RESPONSE_LEN, true);
 
     } else if (strcmp(cmd, "banned-date") == 0) {
-        handle_client_banned_by_date(state, response, MAX_RESPONSE_LEN);
+        handle_client_banned_by_date(state, response, MAX_RESPONSE_LEN, false);
+
+    } else if (strcmp(cmd, "banned-date-fw") == 0) {
+        handle_client_banned_by_date(state, response, MAX_RESPONSE_LEN, true);
 
     } else if (strcmp(cmd, "pending") == 0) {
         handle_client_pending(state, response, MAX_RESPONSE_LEN);
