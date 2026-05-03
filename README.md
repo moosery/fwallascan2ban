@@ -146,16 +146,20 @@ Each entry in the banned list carries a source tag:
 | `auto` | Banned automatically by log pattern matching |
 | `manual` | Banned manually via `fwallascan2ban-client ban` |
 | `firewalla` | Found in Firewalla target list but not in local db (added externally via MSP portal or mobile app) |
+| `fw-rule` | Blocked by a Firewalla individual IP block rule; removed from our target list to free capacity |
 | `placeholder` | Placeholder IP keeping an otherwise empty list alive (never a real ban) |
 
 ## Coexistence with Firewalla's Own Block Rules
 
-Firewalla's threat intelligence may independently create individual IP block rules (type `ip`) for the same addresses that fwallascan2ban manages via its target list. These are separate mechanisms and coexist without conflict — an IP blocked by both is simply double-blocked, which is harmless.
+Firewalla's threat intelligence may independently create individual IP block rules for the same addresses that fwallascan2ban manages via its target list. During each reconciliation pass, fwallascan2ban detects these individual rules and automatically removes the corresponding IPs from its managed target lists, freeing capacity for new bans. The affected IPs are recorded in the local database with the `fw-rule` source tag.
 
-Two things to be aware of:
+This means:
 
-- **Reconciliation** — `fw_ip_is_banned()` checks only the managed target lists, not individual Firewalla rules. If an IP has a Firewalla-added individual rule but is not in the target list, reconciliation may re-add it to the target list. This is redundant but harmless.
-- **Unbanning** — `fwallascan2ban-client unban <ip>` removes the IP from the target list and local db, but any individual Firewalla block rule for the same IP is not touched. The IP will remain blocked at the Firewalla level until that rule is removed manually via the MSP portal.
+- **Reconciliation actively deduplicates** — if Firewalla adds an individual block rule for an IP that is in our target list, the next reconciliation removes it from the list. The IP remains blocked at the Firewalla level. No action is needed.
+- **Filter engine is seeded** — after reconciliation, the log scanner marks all `fw-rule` IPs as already-banned so they are not re-processed. If the same IP appears in the log again, it is silently ignored.
+- **Future reconciliations skip `fw-rule` IPs** — they are not presented to the reconciliation logic as "expected in target list", so there is no re-add loop.
+- **Unbanning** — `fwallascan2ban-client unban <ip>` removes the IP from the target list and local db, but any individual Firewalla block rule is not touched. The IP remains blocked at the Firewalla level until that rule is removed manually via the MSP portal.
+- **If Firewalla removes the individual rule** — the `fw-rule` tag persists in the local db until the next log match or manual `ban` command re-adds the IP through the normal path.
 
 ## Files
 

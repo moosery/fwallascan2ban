@@ -37,6 +37,7 @@
 #define FW_MAX_IPS_PER_LIST     2000    /* Maximum IPs we support per list      */
 #define FW_MAX_TARGET_LISTS     32      /* Maximum number of target lists       */
 #define FW_MAX_RULES            64      /* Maximum number of rules              */
+#define FW_MAX_INDIVIDUAL_RULES 256     /* Max individual Firewalla IP rules    */
 #define FW_API_TIMEOUT_SECS     30      /* libcurl request timeout              */
 #define FW_TARGET_LIST_PREFIX   "-"     /* Separator for numbered overflow lists*/
 
@@ -92,6 +93,8 @@ typedef struct {
     int             list_count;                     /* Number of managed lists  */
     int             total_ips;                      /* Total IPs across lists   */
     void           *curl_handle;                    /* libcurl easy handle      */
+    char            individual_rule_ips[FW_MAX_INDIVIDUAL_RULES][FW_MAX_IP_LEN];
+    int             individual_rule_ip_count;       /* IPs blocked by FW rules  */
 } FwClient;
 
 /* Reconciliation report - returned after reconcile() */
@@ -107,6 +110,8 @@ typedef struct {
     int     missing_rules;          /* Rules missing for target lists           */
     int     missing_rules_created;  /* Missing rules created                    */
     int     lists_consolidated;     /* Number of lists consolidated             */
+    int     fw_rule_found;          /* IPs covered by Firewalla individual rules*/
+    int     fw_rule_removed;        /* IPs removed from our lists (FW owns them)*/
     int     errors;                 /* Number of errors encountered             */
 } FwReconcileReport;
 

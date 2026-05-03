@@ -1132,6 +1132,83 @@ int fw_reconcile(FwClient *client, const Config *config,
         }
     }
 
+    /* -------------------------------------------------------------------------
+     * Step 5b: Find individual Firewalla IP block rules
+     * For any IP already in our target lists, remove it — Firewalla owns the
+     * block at a higher level. Track all such IPs in client->individual_rule_ips
+     * so the daemon can seed the filter engine and update the db.
+     * --------------------------------------------------------------------- */
+    client->individual_rule_ip_count = 0;
+    const char *iscan = response.data;
+
+    while (iscan != NULL) {
+        /* Find next target block with type "ip" */
+        const char *type_pos = strstr(iscan, "\"type\":\"ip\"");
+        if (type_pos == NULL)
+            type_pos = strstr(iscan, "\"type\": \"ip\"");
+        if (type_pos == NULL)
+            break;
+
+        /* Extract the IP value from this target block */
+        char fw_ip[FW_MAX_IP_LEN] = {0};
+        if (json_get_string(type_pos, "value", fw_ip, sizeof(fw_ip)) != 0) {
+            iscan = type_pos + 1;
+            continue;
+        }
+
+        /* Validate it looks like an IPv4 address */
+        unsigned int a, b, c, d;
+        if (sscanf(fw_ip, "%u.%u.%u.%u", &a, &b, &c, &d) != 4) {
+            iscan = type_pos + 1;
+            continue;
+        }
+
+        /* Check the enclosing rule has action=block and status=active by
+         * looking back up to 512 bytes for the surrounding rule context */
+        size_t lookback = (size_t)(type_pos - response.data);
+        if (lookback > 512) lookback = 512;
+        char ctx[513];
+        memcpy(ctx, type_pos - lookback, lookback);
+        ctx[lookback] = '\0';
+        if (strstr(ctx, "\"block\"") == NULL ||
+            strstr(ctx, "\"active\"") == NULL) {
+            iscan = type_pos + 1;
+            continue;
+        }
+
+        /* Skip placeholder */
+        if (strcmp(fw_ip, config->target_list.placeholder_ip) == 0) {
+            iscan = type_pos + 1;
+            continue;
+        }
+
+        /* Store in individual rule IP list */
+        if (client->individual_rule_ip_count < FW_MAX_INDIVIDUAL_RULES) {
+            strncpy(client->individual_rule_ips[client->individual_rule_ip_count],
+                    fw_ip, FW_MAX_IP_LEN - 1);
+            client->individual_rule_ip_count++;
+            report->fw_rule_found++;
+        }
+
+        /* Remove from our managed target lists if present — Firewalla owns it */
+        for (int li = 0; li < client->list_count; li++) {
+            FwTargetList *list = &client->lists[li].list;
+            if (!ip_in_list(list, fw_ip))
+                continue;
+            remove_ip_from_list(list, fw_ip);
+            if (list->ip_count == 0)
+                add_ip_to_list(list, config->target_list.placeholder_ip);
+            patch_target_list(client, list);
+            report->fw_rule_removed++;
+            printf("firewalla: removed %s from '%s' "
+                   "(covered by Firewalla individual rule)\n",
+                   fw_ip, list->name);
+            break;
+        }
+
+        iscan = type_pos + 1;
+    }
+
     curlbuf_free(&response);
 
     /* -------------------------------------------------------------------------
@@ -1232,6 +1309,8 @@ int fw_reconcile(FwClient *client, const Config *config,
     printf("  missing rules:        %d (created: %d)\n",
            report->missing_rules, report->missing_rules_created);
     printf("  IPs consolidated:     %d\n", report->lists_consolidated);
+    printf("  FW individual rules:  %d found, %d removed from our lists\n",
+           report->fw_rule_found, report->fw_rule_removed);
 
     return 0;
 }

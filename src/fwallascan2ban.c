@@ -48,7 +48,7 @@
  * Constants
  * ----------------------------------------------------------------------------- */
 
-#define DAEMON_VERSION          "1.1.0"
+#define DAEMON_VERSION          "1.2.0"
 #define DEFAULT_CONFIG_PATH     "/etc/fwallascan2ban/fwallascan2ban.conf"
 #define SOCKET_PATH             "/run/fwallascan2ban/fwallascan2ban.sock"
 #define DB_PATH                 "/var/lib/fwallascan2ban/banned.db"
@@ -63,6 +63,7 @@
 #define BAN_SOURCE_AUTO         "auto"
 #define BAN_SOURCE_MANUAL       "manual"
 #define BAN_SOURCE_FIREWALLA    "firewalla"
+#define BAN_SOURCE_FW_RULE      "fw-rule"
 #define BAN_SOURCE_PLACEHOLDER  "placeholder"
 #define BAN_SOURCE_REMOVED      "removed"
 
@@ -285,7 +286,8 @@ static int db_get_active_ips(DaemonState *state,
 {
     int count = 0;
     for (int i = 0; i < state->db_count && count < max; i++) {
-        if (state->db[i].active)
+        if (state->db[i].active &&
+            strcmp(state->db[i].source, BAN_SOURCE_FW_RULE) != 0)
             ips[count++] = state->db[i].ip;
     }
     return count;
@@ -632,6 +634,33 @@ static void handle_client_pending(DaemonState *state,
 }
 
 /*
+ * process_fw_rule_ips - Update db and filter for IPs that fw_reconcile found
+ * are covered by Firewalla individual block rules. Those IPs have already been
+ * removed from our managed target lists by fw_reconcile. Here we tag them in
+ * the db so future reconciliations skip them, and seed the filter engine so
+ * the log scanner won't try to re-ban them.
+ */
+static void process_fw_rule_ips(DaemonState *state)
+{
+    int count = state->firewalla.individual_rule_ip_count;
+    if (count == 0)
+        return;
+
+    bool changed = false;
+    for (int i = 0; i < count; i++) {
+        const char *ip = state->firewalla.individual_rule_ips[i];
+        DbEntry *e = db_find(state, ip);
+        if (e == NULL || strcmp(e->source, BAN_SOURCE_FW_RULE) != 0) {
+            db_add(state, ip, BAN_SOURCE_FW_RULE);
+            changed = true;
+        }
+        filter_mark_banned(&state->filter, ip);
+    }
+    if (changed)
+        db_save(state);
+}
+
+/*
  * do_ban_ip - Ban an IP via Firewalla and update local db.
  * source should be BAN_SOURCE_AUTO or BAN_SOURCE_MANUAL.
  */
@@ -878,6 +907,9 @@ static int daemon_init(DaemonState *state, const char *config_path,
         db_save(state);
     }
 
+    /* Process IPs now covered by Firewalla individual rules */
+    process_fw_rule_ips(state);
+
     /* Seed filter engine with all currently banned IPs */
     static FwIP banned_ips[DB_MAX_IPS];
     static char banned_list_ids[DB_MAX_IPS][FW_MAX_ID_LEN];
@@ -986,6 +1018,9 @@ static void run_main_loop(DaemonState *state)
                          db_ips, db_ip_count, &report);
             state->last_reconcile = time(NULL);
 
+            /* Process IPs now covered by Firewalla individual rules */
+            process_fw_rule_ips(state);
+
             /* Re-seed filter with already-banned IPs so they aren't re-queued */
             static FwIP reload_banned_ips[DB_MAX_IPS];
             static char reload_banned_list_ids[DB_MAX_IPS][FW_MAX_ID_LEN];
@@ -1011,6 +1046,7 @@ static void run_main_loop(DaemonState *state)
                 FwReconcileReport report;
                 fw_reconcile(&state->firewalla, &state->config,
                              db_ips, db_ip_count, &report);
+                process_fw_rule_ips(state);
                 state->last_reconcile = now;
             }
         }
@@ -1110,6 +1146,9 @@ int main(int argc, char *argv[])
 
     /* Ignore SIGPIPE - handle broken client connections gracefully */
     signal(SIGPIPE, SIG_IGN);
+
+    setlinebuf(stdout);
+    setlinebuf(stderr);
 
     printf("fwallascan2ban v%s starting\n", DAEMON_VERSION);
 
