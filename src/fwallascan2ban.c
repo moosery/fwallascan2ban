@@ -48,7 +48,7 @@
  * Constants
  * ----------------------------------------------------------------------------- */
 
-#define DAEMON_VERSION          "1.2.1"
+#define DAEMON_VERSION          "1.2.2"
 #define DEFAULT_CONFIG_PATH     "/etc/fwallascan2ban/fwallascan2ban.conf"
 #define SOCKET_PATH             "/run/fwallascan2ban/fwallascan2ban.sock"
 #define DB_PATH                 "/var/lib/fwallascan2ban/banned.db"
@@ -548,6 +548,7 @@ static void handle_client_banned_by_date(DaemonState *state,
     typedef struct {
         char ip[FW_MAX_IP_LEN];
         char source[32];
+        char list_name[FW_MAX_NAME_LEN];
         char timestamp[32];
     } BannedEntry;
 
@@ -568,6 +569,7 @@ static void handle_client_banned_by_date(DaemonState *state,
             strncpy(entries[count].ip, ip, FW_MAX_IP_LEN - 1);
             strncpy(entries[count].source,
                     e ? e->source : BAN_SOURCE_FIREWALLA, 31);
+            strncpy(entries[count].list_name, list->name, FW_MAX_NAME_LEN - 1);
             strncpy(entries[count].timestamp,
                     e ? e->timestamp : "unknown", 31);
             count++;
@@ -594,8 +596,8 @@ static void handle_client_banned_by_date(DaemonState *state,
         char ts[80];
         format_timestamp(entries[i].timestamp, ts, sizeof(ts));
         pos += (size_t)snprintf(resp + pos, resp_len - pos,
-            "  %-20s [%-11s] %s\n",
-            entries[i].ip, entries[i].source, ts);
+            "  %-20s [%-11s] %-26s %s\n",
+            entries[i].ip, entries[i].source, entries[i].list_name, ts);
     }
 
     int total = count;
