@@ -124,7 +124,9 @@ The `fwallascan2ban-client` tool communicates with the running daemon over a Uni
 |---|---|
 | `fwallascan2ban-client status` | Daemon status, uptime, target list inventory, pending IPs |
 | `fwallascan2ban-client banned` | All banned IPs with source tag and timestamp, grouped by list |
+| `fwallascan2ban-client banned --fw-rules` | Same, plus a separate section for IPs blocked by Firewalla individual rules |
 | `fwallascan2ban-client banned --sort-date` | All banned IPs sorted by date, oldest first (newest at bottom) |
+| `fwallascan2ban-client banned --sort-date --fw-rules` | Sorted banned IPs, then a separate sorted section for Firewalla individual rule IPs |
 | `fwallascan2ban-client pending` | IPs that have matched patterns but not yet reached maxretry |
 | `fwallascan2ban-client rules` | Show active failregex scan patterns and maxretry threshold |
 | `fwallascan2ban-client ban <ip>` | Manually ban an IP immediately |
