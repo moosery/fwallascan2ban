@@ -168,10 +168,34 @@ static void db_migrate_v1(void)
     if (has_version)
         return;
 
-    /* v1 detected - copy to .v1.bak so the user has a pristine backup */
+    /* v1 detected — copy to .v1.bak and rewrite with v2 header so
+     * subsequent startups don't re-run migration. */
     char bak_path[300];
     snprintf(bak_path, sizeof(bak_path), "%s.v1.bak", DB_PATH);
 
+    /* Read all existing lines into memory */
+    fp = fopen(DB_PATH, "r");
+    if (fp == NULL)
+        return;
+
+    /* Buffer for all data lines (non-comment, non-empty) */
+    static char data_buf[1 << 20]; /* 1 MB — more than enough */
+    size_t data_len = 0;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        /* Preserve non-header comment lines and data lines */
+        if (strncmp(line, "# fwallascan2ban", 16) == 0 ||
+            strncmp(line, "# format:", 9) == 0 ||
+            strncmp(line, "# db_version:", 13) == 0)
+            continue; /* skip old header lines — we'll rewrite them */
+        size_t llen = strlen(line);
+        if (data_len + llen < sizeof(data_buf)) {
+            memcpy(data_buf + data_len, line, llen);
+            data_len += llen;
+        }
+    }
+    fclose(fp);
+
+    /* Write backup copy (original content) */
     FILE *src = fopen(DB_PATH, "r");
     FILE *dst = fopen(bak_path, "w");
     if (src != NULL && dst != NULL) {
@@ -179,11 +203,23 @@ static void db_migrate_v1(void)
         size_t n;
         while ((n = fread(buf, 1, sizeof(buf), src)) > 0)
             fwrite(buf, 1, n, dst);
-        printf("db: v1 database backed up to %s (will upgrade to v2 on next save)\n",
-               bak_path);
     }
     if (src) fclose(src);
     if (dst) fclose(dst);
+
+    /* Rewrite db with v2 header so migration doesn't re-run next startup */
+    char tmp_path[300];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", DB_PATH);
+    FILE *out = fopen(tmp_path, "w");
+    if (out != NULL) {
+        fprintf(out, "# fwallascan2ban banned.db\n");
+        fprintf(out, "# db_version: 2\n");
+        fprintf(out, "# format: ip,source,timestamp\n");
+        fwrite(data_buf, 1, data_len, out);
+        fclose(out);
+        rename(tmp_path, DB_PATH);
+        printf("db: migrated v1 database to v2 format, backup: %s\n", bak_path);
+    }
 }
 
 /*
