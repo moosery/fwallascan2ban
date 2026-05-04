@@ -48,7 +48,7 @@
  * Constants
  * ----------------------------------------------------------------------------- */
 
-#define DAEMON_VERSION          "2.0.0"
+#define DAEMON_VERSION          "2.0.1"
 #define DEFAULT_CONFIG_PATH     "/etc/fwallascan2ban/fwallascan2ban.conf"
 #define SOCKET_PATH             "/run/fwallascan2ban/fwallascan2ban.sock"
 #define DB_PATH                 "/var/lib/fwallascan2ban/banned.db"
@@ -60,7 +60,6 @@
 #define DB_MAX_IPS              (FW_MAX_TARGET_LISTS * FW_MAX_IPS_PER_LIST)
 
 /* Ban source tags */
-#define BAN_SOURCE_AUTO         "auto"
 #define BAN_SOURCE_MANUAL       "manual"
 #define BAN_SOURCE_FIREWALLA    "firewalla"
 #define BAN_SOURCE_FW_RULE      "fw-rule"
@@ -660,7 +659,7 @@ static void handle_client_banned_by_date(DaemonState *state,
 {
     typedef struct {
         char ip[FW_MAX_IP_LEN];
-        char source[32];
+        char source[48];
         char list_name[FW_MAX_NAME_LEN];
         char timestamp[32];
     } BannedEntry;
@@ -681,7 +680,8 @@ static void handle_client_banned_by_date(DaemonState *state,
             DbEntry *e = db_find(state, ip);
             strncpy(entries[count].ip, ip, FW_MAX_IP_LEN - 1);
             strncpy(entries[count].source,
-                    e ? e->source : BAN_SOURCE_FIREWALLA, 31);
+                    e ? e->source : BAN_SOURCE_FIREWALLA,
+                    sizeof(entries[count].source) - 1);
             strncpy(entries[count].list_name, list->name, FW_MAX_NAME_LEN - 1);
             strncpy(entries[count].timestamp,
                     e ? e->timestamp : "unknown", 31);
@@ -725,7 +725,8 @@ static void handle_client_banned_by_date(DaemonState *state,
             if (strcmp(e->source, BAN_SOURCE_FW_RULE) != 0 || !e->active)
                 continue;
             strncpy(fw_entries[fw_count].ip, e->ip, FW_MAX_IP_LEN - 1);
-            strncpy(fw_entries[fw_count].source, e->source, 31);
+            strncpy(fw_entries[fw_count].source, e->source,
+                    sizeof(fw_entries[fw_count].source) - 1);
             strncpy(fw_entries[fw_count].timestamp, e->timestamp, 31);
             fw_count++;
         }
@@ -864,7 +865,7 @@ static void process_fw_rule_ips(DaemonState *state)
 
 /*
  * do_ban_ip - Ban an IP via Firewalla and update local db.
- * source should be BAN_SOURCE_AUTO or BAN_SOURCE_MANUAL.
+ * source should be an "auto:<name>" tag or BAN_SOURCE_MANUAL.
  */
 static int do_ban_ip(DaemonState *state, const char *ip, const char *source)
 {

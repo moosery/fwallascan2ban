@@ -44,8 +44,9 @@
 #           Status:          running
 #           PID:             12345
 #           Uptime:          2 days, 4 hours
-#           Log file:        /var/log/tomcat10/access_log.2026-04-24.log
-#           Lines processed: 48291
+#           Log sources:     2
+#             [tomcat]  /var/log/tomcat10/localhost_access_log.2026-04-24.txt (48291 lines)
+#             [safeline] /var/log/safeline-waf/attacks.log (312 lines)
 #           -------------------------------------------
 #           Target Lists:    2
 #             WebServer-Blocklist    (987/1000 IPs)
@@ -73,11 +74,11 @@
 #           --------------------------------------------
 #           1.2.3.4          [auto:tomcat]  2026-04-24 10:32:11
 #           5.6.7.8          [manual]       2026-04-24 11:15:43
-#           9.10.11.12       [firewalla]   2026-04-23 08:01:55
+#           9.10.11.12       [firewalla]    2026-04-23 08:01:55
 #
 #           Banned IPs - WebServer-Blocklist-2 (143/1000)
 #           -----------------------------------------------
-#           45.33.32.156     [auto]        2026-04-24 09:14:02
+#           45.33.32.156     [auto:safeline] 2026-04-24 09:14:02
 #
 #           Total banned: 1130 across 2 lists
 #

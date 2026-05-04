@@ -110,7 +110,8 @@ static int open_log_file(LogmonState *state, const char *path,
         printf("logmon: reading '%s' from beginning\n", path);
     } else {
         fseek(state->log_fp, 0, SEEK_END);
-        state->file_offset = ftell(state->log_fp);
+        long off = ftell(state->log_fp);
+        state->file_offset = (off >= 0) ? off : 0;
         printf("logmon: monitoring '%s' (seeking to end)\n", path);
     }
 
@@ -164,7 +165,9 @@ static int read_new_lines(LogmonState *state)
         lines_read++;
     }
 
-    state->file_offset = ftell(state->log_fp);
+    long off = ftell(state->log_fp);
+    if (off >= 0)
+        state->file_offset = off;
     clearerr(state->log_fp);
 
     return lines_read;

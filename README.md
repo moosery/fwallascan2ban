@@ -136,6 +136,7 @@ FW_MSP_TOKEN=your_personal_access_token
 # SafeLine WAF poller (required only if using make install-safeline)
 #SAFELINE_API_TOKEN=your_safeline_api_token_here
 #SAFELINE_HOST=10.0.0.1
+#SAFELINE_PORT=9443
 ```
 
 Your MSP domain is the hostname you see in the browser when logged into the MSP portal. Your personal access token is generated under Account Settings in the portal.
@@ -261,7 +262,7 @@ This means:
 
 ## Database Versioning
 
-The local `banned.db` file includes a `# db_version: 2` header as of v1.3.0. On the first startup after upgrading from v1.2.x, the daemon automatically detects the old format and copies the existing database to `banned.db.v1.bak` before continuing. The original data is preserved and the database is upgraded transparently.
+The local `banned.db` file includes a `# db_version: 2` header (introduced in v1.3.0). On the first startup after upgrading from any pre-v1.3.0 installation, the daemon automatically detects the old format and copies the existing database to `banned.db.v1.bak` before continuing. The original data is preserved and the database is upgraded transparently.
 
 ## Files
 
@@ -271,7 +272,7 @@ The local `banned.db` file includes a `# db_version: 2` header as of v1.3.0. On 
 | `/etc/fwallascan2ban/fwallascan2ban.env` | Credentials (MSP domain and token) |
 | `/etc/fwallascan2ban/rsyslog-safeline.conf.example` | rsyslog config example (alternative: syslog forwarding from SafeLine) |
 | `/var/lib/fwallascan2ban/banned.db` | Local persistent state of all banned IPs |
-| `/var/lib/fwallascan2ban/banned.db.v1.bak` | Backup of pre-v1.3.0 database (created once on upgrade) |
+| `/var/lib/fwallascan2ban/banned.db.v1.bak` | Backup of pre-v1.3.0 database format (created once on first upgrade) |
 | `/run/fwallascan2ban/fwallascan2ban.sock` | Unix socket for client communication |
 | `/usr/local/sbin/safeline-poll` | SafeLine WAF event poller script (installed via `make install-safeline`) |
 | `/var/log/safeline-waf/attacks.log` | SafeLine denied-IP events log (written by `safeline-poll`) |

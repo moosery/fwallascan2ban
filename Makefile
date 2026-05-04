@@ -100,7 +100,7 @@ install: all
 # Prerequisites:
 #   1. Add to /etc/fwallascan2ban/fwallascan2ban.env:
 #        SAFELINE_API_TOKEN=<your SafeLine API token>
-#        SAFELINE_HOST=<SafeLine VM IP>   (default: 10.17.3.20)
+#        SAFELINE_HOST=<SafeLine VM IP>
 #   2. Add [Log:safeline] section to /etc/fwallascan2ban/fwallascan2ban.conf
 #      (see fwallascan2ban.conf.example for the full example)
 #   3. Enable the timer:
@@ -117,9 +117,9 @@ install-safeline:
 	systemctl daemon-reload
 	@echo ""
 	@echo "SafeLine poller installed. Next steps:"
-	@echo "  1. Add to /etc/fwallascan2ban/fwallascan2ban.env:"
+	@echo "  1. Set in /etc/fwallascan2ban/fwallascan2ban.env:"
 	@echo "       SAFELINE_API_TOKEN=<your token>"
-	@echo "       SAFELINE_HOST=<SafeLine VM IP>   # if not 10.17.3.20"
+	@echo "       SAFELINE_HOST=<SafeLine VM IP>"
 	@echo "  2. Add [Log:safeline] to /etc/fwallascan2ban/fwallascan2ban.conf"
 	@echo "       (see fwallascan2ban.conf.example)"
 	@echo "  3. systemctl enable --now safeline-poll.timer"
@@ -177,4 +177,4 @@ debug: all
 # =============================================================================
 # Declare phony targets
 # =============================================================================
-.PHONY: all clean rebuild install uninstall debug
+.PHONY: all clean rebuild install uninstall install-safeline uninstall-safeline debug

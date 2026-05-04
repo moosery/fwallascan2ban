@@ -52,7 +52,7 @@ def fetch_page(page):
            f"/api/open/events?page={page}&page_size={PAGE_SIZE}")
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx.verify_mode = ssl.CERT_NONE  # SafeLine uses a self-signed cert by default
     req = urllib.request.Request(
         url, headers={"X-SLCE-API-TOKEN": API_TOKEN})
     with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
@@ -81,12 +81,16 @@ def main():
         nodes = body.get("data", {}).get("nodes", [])
         if not nodes:
             break
+        # API returns events in descending ID order (newest first)
 
         done = False
         for node in nodes:
             if node["id"] <= last_id:
                 done = True
                 break
+            ip = node.get("ip", "")
+            if not ip:
+                continue
             if node.get("deny_count", 0) > 0:
                 new_events.append(node)
 

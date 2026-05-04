@@ -133,11 +133,6 @@ static Section parse_section(const char *line)
     if (strcasecmp(line, "[Rule]") == 0)            return SECTION_RULE;
     if (strcasecmp(line, "[Reconciliation]") == 0)  return SECTION_RECONCILIATION;
     if (strcasecmp(line, "[Filters]") == 0)         return SECTION_FILTERS;
-    if (strcasecmp(line, "[Monitor]") == 0) {
-        fprintf(stderr, "config: [Monitor] is not supported in v2.0.0 — "
-                "use [Log:name] sections instead\n");
-        return SECTION_NONE;
-    }
     fprintf(stderr, "config: unknown section: %s\n", line);
     return SECTION_NONE;
 }
@@ -296,7 +291,7 @@ static int append_ignoreregex(Config *config, const char *entry)
         return -1;
     }
     strncpy(config->filters.ignoreregex[config->filters.ignoreregex_count],
-            entry, 63);
+            entry, sizeof(config->filters.ignoreregex[0]) - 1);
     config->filters.ignoreregex_count++;
     return 0;
 }
@@ -554,6 +549,12 @@ int config_load(const char *path, Config *config)
                 continue;
             }
 
+            if (strcasecmp(line, "[Monitor]") == 0) {
+                fprintf(stderr, "config: [Monitor] is not supported in "
+                        "v2.0.0 — use [Log:name] sections instead\n");
+                rc = -1;
+                goto done;
+            }
             current_section     = parse_section(line);
             current_log_src_idx = -1;
             continue;

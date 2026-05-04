@@ -68,25 +68,9 @@ static int expand_host_token(const char *pattern, char *out, size_t out_len)
  */
 static int find_host_group(const char *pattern)
 {
-    /* Count opening parentheses before the host pattern to determine
-     * which group captures the host. In our failregex patterns the
-     * host is always the first capture group. */
-    int group = 1;
-    const char *host_pat = FILTER_HOST_PATTERN;
-    const char *pos = strstr(pattern, host_pat);
-    if (pos == NULL)
-        return 1;
-
-    /* Count unescaped '(' before the host pattern */
-    for (const char *p = pattern; p < pos; p++) {
-        if (*p == '\\') {
-            p++; /* skip escaped character */
-            continue;
-        }
-        if (*p == '(')
-            group++;
-    }
-    return 1; /* Host is always group 1 in our patterns */
+    /* <HOST> expands to the first capture group in all our failregex patterns. */
+    (void)pattern;
+    return 1;
 }
 
 /*

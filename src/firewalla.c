@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include <curl/curl.h>
 
 #include "firewalla.h"
@@ -189,7 +190,7 @@ static const char *json_find_key(const char *json, const char *key)
     pos += strlen(key);
 
     /* Skip whitespace and colon */
-    while (*pos == ' ' || *pos == '\t' || *pos == ':' || *pos == ' ')
+    while (*pos == ' ' || *pos == '\t' || *pos == ':')
         pos++;
 
     return pos;
@@ -669,7 +670,7 @@ int fw_create_target_list(FwClient *client, const Config *config,
     int rc = fw_request(client, "POST", "/v2/target-lists", body,
                         &response, &status_code);
 
-    if (rc != 0 || status_code != 200) {
+    if (rc != 0 || (status_code != 200 && status_code != 201)) {
         fprintf(stderr, "firewalla: POST /v2/target-lists failed "
                 "(status %ld): %s\n", status_code,
                 response.data ? response.data : "");
@@ -752,7 +753,7 @@ int fw_create_rule(FwClient *client, const Config *config,
     int rc = fw_request(client, "POST", "/v2/rules", body,
                         &response, &status_code);
 
-    if (rc != 0 || status_code != 200) {
+    if (rc != 0 || (status_code != 200 && status_code != 201)) {
         fprintf(stderr, "firewalla: POST /v2/rules failed "
                 "(status %ld): %s\n", status_code,
                 response.data ? response.data : "");
@@ -835,13 +836,15 @@ int fw_reconcile(FwClient *client, const Config *config,
         /* Check if this list matches our base name pattern */
         bool matches = (strcmp(list_name, base_name) == 0);
         if (!matches) {
-            /* Check for numbered suffix: base_name-N */
+            /* Check for numbered suffix: base_name-N, base_name-10, etc. */
             size_t base_len = strlen(base_name);
             if (strncmp(list_name, base_name, base_len) == 0 &&
                 list_name[base_len] == '-' &&
-                list_name[base_len + 1] >= '2' &&
-                list_name[base_len + 1] <= '9') {
-                matches = true;
+                isdigit((unsigned char)list_name[base_len + 1])) {
+                /* Verify the suffix is a number >= 2 (no "base_name-0" or "-1") */
+                long suffix = strtol(list_name + base_len + 1, NULL, 10);
+                if (suffix >= 2)
+                    matches = true;
             }
         }
 
