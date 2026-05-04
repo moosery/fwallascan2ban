@@ -24,7 +24,6 @@ typedef enum {
     SECTION_MSP,
     SECTION_TARGETLIST,
     SECTION_RULE,
-    SECTION_MONITOR,
     SECTION_RECONCILIATION,
     SECTION_FILTERS,
     SECTION_LOG         /* [Log:name] — per-source log config */
@@ -132,9 +131,13 @@ static Section parse_section(const char *line)
     if (strcasecmp(line, "[MSP]") == 0)             return SECTION_MSP;
     if (strcasecmp(line, "[TargetList]") == 0)      return SECTION_TARGETLIST;
     if (strcasecmp(line, "[Rule]") == 0)            return SECTION_RULE;
-    if (strcasecmp(line, "[Monitor]") == 0)         return SECTION_MONITOR;
     if (strcasecmp(line, "[Reconciliation]") == 0)  return SECTION_RECONCILIATION;
     if (strcasecmp(line, "[Filters]") == 0)         return SECTION_FILTERS;
+    if (strcasecmp(line, "[Monitor]") == 0) {
+        fprintf(stderr, "config: [Monitor] is not supported in v2.0.0 — "
+                "use [Log:name] sections instead\n");
+        return SECTION_NONE;
+    }
     fprintf(stderr, "config: unknown section: %s\n", line);
     return SECTION_NONE;
 }
@@ -267,10 +270,6 @@ static void set_defaults(Config *config)
     config->rule.rule_auto_create   = true;
     config->rule.rule_scope_type    = RULE_SCOPE_NONE;
 
-    /* Monitor */
-    config->monitor.maxretry            = CONFIG_DEFAULT_MAXRETRY;
-    config->monitor.log_scan_interval   = CONFIG_DEFAULT_LOG_SCAN_INTERVAL;
-
     /* Reconciliation */
     config->reconciliation.reconcile_interval       = CONFIG_DEFAULT_RECONCILE_INTERVAL;
     config->reconciliation.on_duplicate_ip          = ON_DUPLICATE_REMOVE;
@@ -287,22 +286,6 @@ static void set_defaults(Config *config)
 static bool is_continuation(const char *line)
 {
     return (line[0] == ' ' || line[0] == '\t');
-}
-
-/*
- * append_pattern - Append a failregex or ignoreregex pattern to the config.
- */
-static int append_failregex(Config *config, const char *pattern)
-{
-    if (config->filters.failregex_count >= CONFIG_MAX_PATTERNS) {
-        fprintf(stderr, "config: too many failregex patterns (max %d)\n",
-                CONFIG_MAX_PATTERNS);
-        return -1;
-    }
-    strncpy(config->filters.failregex[config->filters.failregex_count],
-            pattern, CONFIG_MAX_VALUE - 1);
-    config->filters.failregex_count++;
-    return 0;
 }
 
 static int append_ignoreregex(Config *config, const char *entry)
@@ -383,28 +366,6 @@ static int handle_rule(Config *config, const char *key, const char *val)
     return 0;
 }
 
-static int handle_monitor(Config *config, const char *key, const char *val)
-{
-    if (strcmp(key, "log_pattern") == 0) {
-        strncpy(config->monitor.log_pattern, val, CONFIG_MAX_PATH - 1);
-    } else if (strcmp(key, "maxretry") == 0) {
-        config->monitor.maxretry = atoi(val);
-        if (config->monitor.maxretry < 1) {
-            fprintf(stderr, "config: maxretry must be >= 1 (using 3)\n");
-            config->monitor.maxretry = CONFIG_DEFAULT_MAXRETRY;
-        }
-    } else if (strcmp(key, "log_scan_interval") == 0) {
-        config->monitor.log_scan_interval = atoi(val);
-        if (config->monitor.log_scan_interval < 0) {
-            fprintf(stderr, "config: log_scan_interval must be >= 0 (using 60)\n");
-            config->monitor.log_scan_interval = CONFIG_DEFAULT_LOG_SCAN_INTERVAL;
-        }
-    } else {
-        fprintf(stderr, "config: unknown key in [Monitor]: %s\n", key);
-    }
-    return 0;
-}
-
 static int handle_reconciliation(Config *config, const char *key,
                                  const char *val)
 {
@@ -429,25 +390,17 @@ static int handle_reconciliation(Config *config, const char *key,
     return 0;
 }
 
-/*
- * handle_filters - Handle a key in [Filters].
- *
- * For failregex and ignoreregex, the first line after the key= is the
- * first pattern. Subsequent indented lines are continuation patterns
- * handled separately in the main parse loop.
- *
- * last_filter_key is set so the continuation handler knows which list
- * to append to.
- */
 static int handle_filters(Config *config, const char *key, const char *val,
                            char *last_filter_key, size_t lk_size)
 {
     strncpy(last_filter_key, key, lk_size - 1);
 
-    if (strcmp(key, "failregex") == 0) {
-        return append_failregex(config, val);
-    } else if (strcmp(key, "ignoreregex") == 0) {
+    if (strcmp(key, "ignoreregex") == 0) {
         return append_ignoreregex(config, val);
+    } else if (strcmp(key, "failregex") == 0) {
+        fprintf(stderr, "config: failregex in [Filters] is not supported in "
+                "v2.0.0 — put failregex in each [Log:name] section\n");
+        return -1;
     } else {
         fprintf(stderr, "config: unknown key in [Filters]: %s\n", key);
     }
@@ -539,9 +492,7 @@ int config_load(const char *path, Config *config)
                 continue;
 
             if (current_section == SECTION_FILTERS) {
-                if (strcmp(last_filter_key, "failregex") == 0) {
-                    rc = append_failregex(config, trimmed);
-                } else if (strcmp(last_filter_key, "ignoreregex") == 0) {
+                if (strcmp(last_filter_key, "ignoreregex") == 0) {
                     rc = append_ignoreregex(config, trimmed);
                 }
             } else { /* SECTION_LOG */
@@ -645,9 +596,6 @@ int config_load(const char *path, Config *config)
             case SECTION_RULE:
                 rc = handle_rule(config, key, val);
                 break;
-            case SECTION_MONITOR:
-                rc = handle_monitor(config, key, val);
-                break;
             case SECTION_RECONCILIATION:
                 rc = handle_reconciliation(config, key, val);
                 break;
@@ -668,25 +616,6 @@ int config_load(const char *path, Config *config)
 
         if (rc != 0)
             goto done;
-    }
-
-    /* Synthesize a single log source from legacy [Monitor]+[Filters] if no
-     * [Log:name] sections were found. This ensures backward compatibility. */
-    if (rc == 0 && config->log_source_count == 0 &&
-        config->monitor.log_pattern[0] != '\0')
-    {
-        ConfigLogSource *src = &config->log_sources[0];
-        strncpy(src->name, "default", sizeof(src->name) - 1);
-        strncpy(src->log_pattern, config->monitor.log_pattern,
-                CONFIG_MAX_PATH - 1);
-        src->maxretry          = config->monitor.maxretry;
-        src->log_scan_interval = config->monitor.log_scan_interval;
-        src->failregex_count   = config->filters.failregex_count;
-        for (int i = 0; i < config->filters.failregex_count; i++)
-            strncpy(src->failregex[i], config->filters.failregex[i],
-                    CONFIG_MAX_VALUE - 1);
-        config->log_source_count   = 1;
-        config->using_legacy_config = true;
     }
 
 done:
@@ -740,11 +669,10 @@ int config_validate(const Config *config)
         rc = -1;
     }
 
-    /* Log sources (either from [Log:name] sections or synthesized from legacy
-     * [Monitor]+[Filters]) */
+    /* At least one [Log:name] section is required */
     if (config->log_source_count == 0) {
-        fprintf(stderr, "config: no log sources configured — add [Log:name] "
-                "sections or legacy [Monitor]+[Filters] sections\n");
+        fprintf(stderr, "config: no log sources configured — add at least "
+                "one [Log:name] section\n");
         rc = -1;
     } else {
         for (int i = 0; i < config->log_source_count; i++) {
@@ -798,11 +726,6 @@ void config_dump(const Config *config)
     printf("  scope_type : %d\n", config->rule.rule_scope_type);
     printf("  scope_value: %s\n", config->rule.rule_scope_value);
 
-    printf("[Monitor]\n");
-    printf("  log_pattern: %s\n", config->monitor.log_pattern);
-    printf("  maxretry   : %d\n", config->monitor.maxretry);
-    printf("  scan_intvl : %d\n", config->monitor.log_scan_interval);
-
     printf("[Reconciliation]\n");
     printf("  interval   : %d\n", config->reconciliation.reconcile_interval);
     printf("  on_dup_ip  : %d\n", config->reconciliation.on_duplicate_ip);
@@ -811,17 +734,12 @@ void config_dump(const Config *config)
     printf("  on_miss_rule:%d\n", config->reconciliation.on_missing_rule);
     printf("  on_consolid:%d\n",  config->reconciliation.on_list_consolidation);
 
-    printf("[Filters] (legacy)\n");
-    printf("  failregex count  : %d\n", config->filters.failregex_count);
-    for (int i = 0; i < config->filters.failregex_count; i++)
-        printf("    [%d] %s\n", i, config->filters.failregex[i]);
+    printf("[Filters]\n");
     printf("  ignoreregex count: %d\n", config->filters.ignoreregex_count);
     for (int i = 0; i < config->filters.ignoreregex_count; i++)
         printf("    [%d] %s\n", i, config->filters.ignoreregex[i]);
 
-    printf("Log sources: %d (legacy=%s)\n",
-           config->log_source_count,
-           config->using_legacy_config ? "yes" : "no");
+    printf("Log sources: %d\n", config->log_source_count);
     for (int i = 0; i < config->log_source_count; i++) {
         const ConfigLogSource *src = &config->log_sources[i];
         printf("  [Log:%s]\n", src->name);

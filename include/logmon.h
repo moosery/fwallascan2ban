@@ -99,7 +99,7 @@ typedef struct {
  *
  * Parameters:
  *   state    - Pointer to a LogmonState to initialize
- *   config   - Pointer to a loaded Config struct
+ *   src      - Pointer to the ConfigLogSource for this log source
  *   callback - Function to call for each new log line
  *   userdata - Caller data passed through to callback
  *
@@ -107,7 +107,7 @@ typedef struct {
  *   0 on success
  *  -1 on error (file not found, inotify failure)
  */
-int logmon_init(LogmonState *state, const Config *config,
+int logmon_init(LogmonState *state, const ConfigLogSource *src,
                 LogmonLineCallback callback, void *userdata);
 
 /*

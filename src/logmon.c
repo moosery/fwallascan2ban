@@ -292,7 +292,7 @@ int logmon_resolve_pattern(const char *pattern, char *out, size_t out_len,
     return 0;
 }
 
-int logmon_init(LogmonState *state, const Config *config,
+int logmon_init(LogmonState *state, const ConfigLogSource *src,
                 LogmonLineCallback callback, void *userdata)
 {
     memset(state, 0, sizeof(LogmonState));
@@ -304,19 +304,18 @@ int logmon_init(LogmonState *state, const Config *config,
     state->callback      = callback;
     state->userdata      = userdata;
     state->started_at    = time(NULL);
-    state->scan_interval = config->monitor.log_scan_interval;
+    state->scan_interval = src->log_scan_interval;
     state->last_scan     = time(NULL);
 
-    strncpy(state->pattern, config->monitor.log_pattern,
-            CONFIG_MAX_PATH - 1);
+    strncpy(state->pattern, src->log_pattern, CONFIG_MAX_PATH - 1);
 
     /* Extract directory from pattern */
     char pattern_copy[CONFIG_MAX_PATH];
-    strncpy(pattern_copy, config->monitor.log_pattern, CONFIG_MAX_PATH - 1);
+    strncpy(pattern_copy, src->log_pattern, CONFIG_MAX_PATH - 1);
     extract_dir(pattern_copy, state->watch_dir, sizeof(state->watch_dir));
 
     /* Extract prefix and suffix for directory scanning */
-    extract_prefix_suffix(config->monitor.log_pattern,
+    extract_prefix_suffix(src->log_pattern,
                            state->file_prefix, sizeof(state->file_prefix),
                            state->file_suffix, sizeof(state->file_suffix));
 

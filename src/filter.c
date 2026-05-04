@@ -152,13 +152,13 @@ static HitEntry *hit_get_or_create(FilterEngine *engine, const char *ip)
  * Public API
  * ----------------------------------------------------------------------------- */
 
-int filter_init(FilterEngine *engine, const Config *config)
+int filter_init(FilterEngine *engine, const ConfigLogSource *src)
 {
     memset(engine, 0, sizeof(FilterEngine));
-    engine->maxretry = config->monitor.maxretry;
+    engine->maxretry = src->maxretry;
 
-    for (int i = 0; i < config->filters.failregex_count; i++) {
-        const char *raw = config->filters.failregex[i];
+    for (int i = 0; i < src->failregex_count; i++) {
+        const char *raw = src->failregex[i];
         FilterPattern *pat = &engine->patterns[engine->pattern_count];
 
         /* Save raw pattern */

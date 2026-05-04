@@ -48,7 +48,7 @@
  * Constants
  * ----------------------------------------------------------------------------- */
 
-#define DAEMON_VERSION          "1.3.1"
+#define DAEMON_VERSION          "2.0.0"
 #define DEFAULT_CONFIG_PATH     "/etc/fwallascan2ban/fwallascan2ban.conf"
 #define SOCKET_PATH             "/run/fwallascan2ban/fwallascan2ban.sock"
 #define DB_PATH                 "/var/lib/fwallascan2ban/banned.db"
@@ -1034,14 +1034,8 @@ static void on_log_line(const char *line, void *userdata)
         return;
 
     if (result.ban_triggered) {
-        /* Use plain "auto" for legacy single-source configs; "auto:<name>"
-         * when multiple sources are configured so the origin is clear. */
         char source_tag[48];
-        if (state->config.using_legacy_config) {
-            strncpy(source_tag, BAN_SOURCE_AUTO, sizeof(source_tag) - 1);
-        } else {
-            snprintf(source_tag, sizeof(source_tag), "auto:%s", src->name);
-        }
+        snprintf(source_tag, sizeof(source_tag), "auto:%s", src->name);
         printf("filter: [%s] ban triggered for %s (hits: %d)\n",
                src->name, result.ip, result.hit_count);
         do_ban_ip(state, result.ip, source_tag);
@@ -1068,31 +1062,13 @@ static int init_log_source(DaemonState *state, int idx, bool rescan_mode)
     ctx->state      = state;
     ctx->source_idx = idx;
 
-    /* Build a per-source Config overlay for filter_init:
-     * only monitor.maxretry and filters.failregex* are read. */
-    static Config filter_cfg;  /* static — single-threaded, reused per call */
-    filter_cfg                        = state->config;
-    filter_cfg.monitor.maxretry       = src_cfg->maxretry;
-    filter_cfg.filters.failregex_count = src_cfg->failregex_count;
-    for (int i = 0; i < src_cfg->failregex_count; i++)
-        strncpy(filter_cfg.filters.failregex[i], src_cfg->failregex[i],
-                CONFIG_MAX_VALUE - 1);
-
-    if (filter_init(&ls->filter, &filter_cfg) != 0) {
+    if (filter_init(&ls->filter, src_cfg) != 0) {
         fprintf(stderr, "fwallascan2ban: filter_init failed for [Log:%s]\n",
                 src_cfg->name);
         return -1;
     }
 
-    /* Build a per-source Config overlay for logmon_init:
-     * only monitor.log_pattern and monitor.log_scan_interval are read. */
-    static Config logmon_cfg;  /* static — reused per call */
-    logmon_cfg                           = state->config;
-    strncpy(logmon_cfg.monitor.log_pattern, src_cfg->log_pattern,
-            CONFIG_MAX_PATH - 1);
-    logmon_cfg.monitor.log_scan_interval = src_cfg->log_scan_interval;
-
-    if (logmon_init(&ls->logmon, &logmon_cfg, on_log_line, ctx) != 0) {
+    if (logmon_init(&ls->logmon, src_cfg, on_log_line, ctx) != 0) {
         fprintf(stderr, "fwallascan2ban: logmon_init failed for [Log:%s]\n",
                 src_cfg->name);
         filter_free(&ls->filter);

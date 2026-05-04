@@ -49,7 +49,7 @@ This installs:
 
 ## Multiple Log Sources
 
-A single daemon instance can monitor up to 8 log files simultaneously using named `[Log:name]` sections in the config. Each source has its own file path, `maxretry`, and `failregex` patterns.
+A single daemon instance can monitor up to 8 log files simultaneously using named `[Log:name]` sections in the config. Each source has its own file path, `maxretry`, and `failregex` patterns. At least one `[Log:name]` section is required.
 
 ```ini
 [Log:tomcat]
@@ -64,11 +64,7 @@ maxretry     = 1
 failregex    = "src_ip":"<HOST>"[^}]*"action":"deny"
 ```
 
-When multiple sources are configured, bans carry a source-qualified tag: `auto:tomcat`, `auto:safeline`, etc. Single-source configs (and legacy configs) continue to use the plain `auto` tag.
-
-### Backward Compatibility
-
-Existing configs using the `[Monitor]` and `[Filters]` sections continue to work without any changes. The daemon synthesizes a `default` log source from those sections automatically and bans are still tagged `auto`.
+Bans carry a source-qualified tag: `auto:tomcat`, `auto:safeline`, etc.
 
 ### SafeLine WAF Integration
 
@@ -159,7 +155,7 @@ Key settings:
 | `max_targets` | Max IPs per target list before overflow list is created | 1000 |
 | `reconcile_interval` | Seconds between periodic reconciliation passes | 3600 |
 
-Per log-source settings (in each `[Log:name]` section):
+Per log-source settings (required; one `[Log:name]` section per source):
 
 | Setting | Description | Default |
 |---|---|---|
@@ -190,7 +186,7 @@ failregex = "src_ip":"<HOST>"[^}]*"action":"deny"
 
 ### Ignore List
 
-Add your own IP, internal networks, and trusted addresses to `ignoreregex` in the `[Filters]` section to prevent accidental banning. The ignore list applies globally to all log sources. Supports single IPs and CIDR ranges. The placeholder IP and loopback addresses are always ignored automatically.
+Add your own IP, internal networks, and trusted addresses to `ignoreregex` in the `[Filters]` section to prevent accidental banning. The ignore list applies globally across all log sources. Supports single IPs and CIDR ranges. The placeholder IP and loopback addresses are always ignored automatically.
 
 ```ini
 [Filters]
@@ -245,7 +241,7 @@ Each entry in the banned list carries a source tag:
 
 | Tag | Meaning |
 |---|---|
-| `auto` | Banned automatically by log pattern matching |
+| `auto:<name>` | Banned automatically by log pattern matching (e.g. `auto:tomcat`, `auto:safeline`) |
 | `manual` | Banned manually via `fwallascan2ban-client ban` |
 | `firewalla` | Found in Firewalla target list but not in local db (added externally via MSP portal or mobile app) |
 | `fw-rule` | Blocked by a Firewalla individual IP block rule; removed from our target list to free capacity |

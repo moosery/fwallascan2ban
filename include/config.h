@@ -135,13 +135,6 @@ typedef struct {
     char            rule_scope_value[CONFIG_MAX_NAME]; /* Scope name to resolve         */
 } ConfigRule;
 
-/* [Monitor] section */
-typedef struct {
-    char    log_pattern[CONFIG_MAX_PATH];   /* Log file path with strftime codes    */
-    int     maxretry;                       /* Hit threshold before banning         */
-    int     log_scan_interval;             /* Seconds between directory scans      */
-} ConfigMonitor;
-
 /* [Reconciliation] section */
 typedef struct {
     int                 reconcile_interval;         /* Seconds between reconciliations  */
@@ -152,10 +145,8 @@ typedef struct {
     OnConsolidation     on_list_consolidation;      /* Consolidation behavior           */
 } ConfigReconciliation;
 
-/* [Filters] section */
+/* [Filters] section — ignoreregex only; applies globally to all log sources */
 typedef struct {
-    char    failregex[CONFIG_MAX_PATTERNS][CONFIG_MAX_VALUE];   /* Fail patterns        */
-    int     failregex_count;                                    /* Number of patterns   */
     char    ignoreregex[CONFIG_MAX_IGNORE][64];                 /* Ignore entries       */
     int     ignoreregex_count;                                  /* Number of entries    */
 } ConfigFilters;
@@ -175,12 +166,10 @@ typedef struct {
     ConfigMSP               msp;
     ConfigTargetList        target_list;
     ConfigRule              rule;
-    ConfigMonitor           monitor;        /* Legacy — kept for backward compat parsing */
     ConfigReconciliation    reconciliation;
-    ConfigFilters           filters;        /* Legacy — kept for backward compat parsing */
+    ConfigFilters           filters;        /* [Filters] — ignoreregex only, global */
     ConfigLogSource         log_sources[CONFIG_MAX_LOG_SOURCES]; /* Active log sources */
     int                     log_source_count;
-    bool                    using_legacy_config; /* true if synthesized from [Monitor]+[Filters] */
     char                    config_path[CONFIG_MAX_PATH]; /* Path to loaded config file */
 } Config;
 

@@ -61,7 +61,8 @@
 #         and timestamp. The placeholder IP is shown separately if present.
 #
 #         Source tags:
-#           [auto]        - Banned automatically by log pattern matching
+#           [auto:name]   - Banned automatically by log pattern matching
+#                           (e.g. [auto:tomcat], [auto:safeline])
 #           [manual]      - Banned manually via fwallascan2ban-client ban
 #           [firewalla]   - Found in Firewalla but not in local db,
 #                           added externally via MSP portal or mobile app
@@ -70,8 +71,8 @@
 #         Example output:
 #           Banned IPs - WebServer-Blocklist (987/1000)
 #           --------------------------------------------
-#           1.2.3.4          [auto]        2026-04-24 10:32:11
-#           5.6.7.8          [manual]      2026-04-24 11:15:43
+#           1.2.3.4          [auto:tomcat]  2026-04-24 10:32:11
+#           5.6.7.8          [manual]       2026-04-24 11:15:43
 #           9.10.11.12       [firewalla]   2026-04-23 08:01:55
 #
 #           Banned IPs - WebServer-Blocklist-2 (143/1000)
@@ -334,20 +335,9 @@ rule_auto_create = true
 #   - log_scan_interval: seconds between directory scans for log rotation
 #   - failregex: one or more patterns to match; each must contain <HOST>
 #
-# Ban source tags:
-#   Single source (legacy config): bans tagged [auto]
-#   Multiple sources:              bans tagged [auto:name] (e.g. [auto:tomcat])
-#
-# BACKWARD COMPATIBILITY — Legacy [Monitor] + [Filters] sections
-#   If your config uses the old [Monitor] and [Filters] format (no [Log:name]
-#   sections), it continues to work. The daemon synthesizes a single log source
-#   named "default" from those sections and bans are tagged [auto] as before.
-#   You can migrate to the new format at any time by converting those sections
-#   to a [Log:name] section.
+# Ban source tags: bans are tagged [auto:name] (e.g. [auto:tomcat])
 #
 # SINGLE LOG SOURCE EXAMPLE (Tomcat only)
-# This is equivalent to the legacy [Monitor]+[Filters] format, but uses the
-# new section syntax.
 # =============================================================================
 
 [Log:tomcat]
@@ -383,12 +373,8 @@ failregex = ^<HOST> - - \[.*\] "(GET|POST|HEAD|PROPFIND|CONNECT) .*\.(php|env|gi
 # MULTI-SOURCE EXAMPLE — Tomcat + SafeLine WAF
 #
 # Uncomment this section if you are also monitoring SafeLine WAF attack logs.
-# SafeLine (on a separate VM) sends syslog to rsyslog on this host; rsyslog
-# writes the raw JSON payload to /var/log/safeline-waf/attacks.log.
-# See rsyslog-safeline.conf.example for the rsyslog configuration.
-#
-# The SafeLine JSON log line looks like:
-#   {"time":1714900000,"src_ip":"1.2.3.4","src_port":54321,...,"action":"deny"}
+# Requires the safeline-poll timer (make install-safeline) to poll the
+# SafeLine API and write denied-IP events to attacks.log.
 #
 # With maxretry=1, every SafeLine block triggers an immediate ban.
 # Bans from this source are tagged [auto:safeline] in the banned list.
@@ -398,23 +384,6 @@ failregex = ^<HOST> - - \[.*\] "(GET|POST|HEAD|PROPFIND|CONNECT) .*\.(php|env|gi
 # maxretry           = 1
 # log_scan_interval  = 0
 # failregex          = "src_ip":"<HOST>"[^}]*"action":"deny"
-
-
-# =============================================================================
-# [Monitor] - Legacy log file monitoring (single source only)
-#
-# This section is provided for backward compatibility with existing configs.
-# New deployments should use [Log:name] sections above instead.
-#
-# If your config has NO [Log:name] sections, the daemon synthesizes one from
-# [Monitor] + [Filters] automatically. The resulting source is named "default"
-# and bans are tagged [auto] as before.
-#
-# If you have [Log:name] sections, this section is ignored.
-# =============================================================================
-# [Monitor]
-# log_pattern = /var/log/tomcat10/access_log.%Y-%m-%d.log
-# maxretry    = 3
 
 
 # =============================================================================
@@ -495,13 +464,7 @@ on_list_consolidation = consolidate
 
 
 # =============================================================================
-# [Filters] - Legacy pattern matching (single source only)
-#
-# Used only when no [Log:name] sections are defined. If you have [Log:name]
-# sections above, this section is ignored.
-#
-# New configs should put failregex directly in each [Log:name] section.
-# ignoreregex belongs here regardless — it applies globally to all sources.
+# [Filters] - Global ignore list
 #
 # ignoreregex:
 #   One or more IP addresses or CIDR ranges to never ban, one per line.

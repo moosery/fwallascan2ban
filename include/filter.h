@@ -91,20 +91,20 @@ typedef struct {
  * -----------------------------------------------------------------------------*/
 
 /*
- * filter_init - Initialize the filter engine from a loaded Config.
+ * filter_init - Initialize the filter engine from a log source config.
  *
  * Compiles all failregex patterns, replacing <HOST> with the IPv4/IPv6
  * capture group pattern. Initializes the hit counter hash table.
  *
  * Parameters:
  *   engine - Pointer to a FilterEngine to initialize
- *   config - Pointer to a loaded Config struct
+ *   src    - Pointer to the ConfigLogSource for this log source
  *
  * Returns:
  *   0 on success
  *  -1 on error (regex compile failure)
  */
-int filter_init(FilterEngine *engine, const Config *config);
+int filter_init(FilterEngine *engine, const ConfigLogSource *src);
 
 /*
  * filter_free - Free all resources used by a FilterEngine.
