@@ -72,15 +72,66 @@ Existing configs using the `[Monitor]` and `[Filters]` sections continue to work
 
 ### SafeLine WAF Integration
 
-SafeLine WAF (running on a separate VM) can forward attack events as syslog to rsyslog on the webserver, which writes the raw JSON to a local file. See `rsyslog-safeline.conf.example` for the rsyslog configuration. SafeLine log lines look like:
+[SafeLine WAF](https://waf.chaitin.com/) blocks malicious HTTP requests on a separate VM. fwallascan2ban can automatically ban those IPs at the Firewalla perimeter by polling the SafeLine open platform API.
+
+> **Note:** The SafeLine free plan does not include syslog export. The polling approach works on all SafeLine plans including free.
+
+#### How it works
+
+A lightweight Python script (`safeline-poll`) is installed as a systemd timer that runs every 60 seconds. It queries the SafeLine REST API for new denied-IP events, writes each one as a JSON line to `/var/log/safeline-waf/attacks.log`, and records the highest event ID seen in a state file to avoid re-processing old events. fwallascan2ban monitors that log file as a `[Log:safeline]` source.
+
+Log lines written to the file look like:
+
+```json
+{"src_ip":"1.2.3.4","deny_count":1,"action":"deny","id":34}
+```
+
+With `maxretry = 1`, every SafeLine block event triggers an immediate Firewalla ban.
+
+#### Installing the SafeLine poller
+
+Add two variables to `/etc/fwallascan2ban/fwallascan2ban.env`:
 
 ```
-{"time":1714900000,"src_ip":"1.2.3.4","src_port":54321,...,"action":"deny"}
+SAFELINE_API_TOKEN=<your SafeLine open platform API token>
+SAFELINE_HOST=<SafeLine VM IP>        # default: 10.17.3.20
 ```
 
-With `maxretry = 1`, every SafeLine block event results in an immediate ban at the Firewalla.
+The API token is generated in the SafeLine console under **System → Open Platform**. You only get to see it once; store it securely in the env file (mode 600).
 
-> **Note:** The current log scanner processes single-line records only. Both Tomcat access logs and SafeLine JSON events are single-line, so both work correctly with the current implementation.
+Then install the poller components:
+
+```
+sudo make install-safeline
+```
+
+This installs:
+- `/usr/local/sbin/safeline-poll` — the polling script
+- `/etc/systemd/system/safeline-poll.service` — oneshot systemd service
+- `/etc/systemd/system/safeline-poll.timer` — runs every 60 seconds
+
+Add a `[Log:safeline]` section to `/etc/fwallascan2ban/fwallascan2ban.conf`:
+
+```ini
+[Log:safeline]
+path             = /var/log/safeline-waf/attacks.log
+maxretry         = 1
+log_scan_interval = 0
+failregex        = "src_ip":"<HOST>"[^}]*"action":"deny"
+```
+
+Enable and start the timer, then reload fwallascan2ban to pick up the new config section:
+
+```
+systemctl enable --now safeline-poll.timer
+fwallascan2ban-client reload
+```
+
+To uninstall the SafeLine poller (leaves logs and state file in place):
+
+```
+sudo make uninstall-safeline
+```
 
 ## Configuration
 
@@ -222,7 +273,10 @@ The local `banned.db` file includes a `# db_version: 2` header as of v1.3.0. On 
 |---|---|
 | `/etc/fwallascan2ban/fwallascan2ban.conf` | Main configuration file |
 | `/etc/fwallascan2ban/fwallascan2ban.env` | Credentials (MSP domain and token) |
-| `/etc/fwallascan2ban/rsyslog-safeline.conf.example` | rsyslog config for SafeLine WAF syslog |
+| `/etc/fwallascan2ban/rsyslog-safeline.conf.example` | rsyslog config example (alternative: syslog forwarding from SafeLine) |
 | `/var/lib/fwallascan2ban/banned.db` | Local persistent state of all banned IPs |
 | `/var/lib/fwallascan2ban/banned.db.v1.bak` | Backup of pre-v1.3.0 database (created once on upgrade) |
 | `/run/fwallascan2ban/fwallascan2ban.sock` | Unix socket for client communication |
+| `/usr/local/sbin/safeline-poll` | SafeLine WAF event poller script (installed via `make install-safeline`) |
+| `/var/log/safeline-waf/attacks.log` | SafeLine denied-IP events log (written by `safeline-poll`) |
+| `/var/lib/fwallascan2ban/safeline-poll.state` | Highest event ID seen; prevents re-processing old events |

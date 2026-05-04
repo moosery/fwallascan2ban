@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll SafeLine WAF events every 60 seconds
+After=network-online.target
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target

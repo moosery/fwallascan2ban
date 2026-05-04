@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""
+safeline-poll — poll the SafeLine WAF events API and append new denied-IP
+events to a log file that fwallascan2ban monitors as [Log:safeline].
+
+Environment variables (loaded from /etc/fwallascan2ban/fwallascan2ban.env):
+  SAFELINE_API_TOKEN  — SafeLine open API token (required)
+  SAFELINE_HOST       — SafeLine host/IP (default: 10.17.3.20)
+  SAFELINE_PORT       — SafeLine API port  (default: 9443)
+
+State file:  /var/lib/fwallascan2ban/safeline-poll.state
+  Stores the highest event ID seen so far to avoid re-processing old events.
+
+Log output:  /var/log/safeline-waf/attacks.log
+  One JSON line per new denied-IP event, format:
+    {"src_ip":"1.2.3.4","deny_count":1,"action":"deny","id":34}
+  fwallascan2ban failregex: "src_ip":"<HOST>"[^}]*"action":"deny"
+"""
+
+import json
+import os
+import ssl
+import sys
+import urllib.error
+import urllib.request
+
+SAFELINE_HOST = os.environ.get("SAFELINE_HOST", "10.17.3.20")
+SAFELINE_PORT = os.environ.get("SAFELINE_PORT", "9443")
+API_TOKEN     = os.environ.get("SAFELINE_API_TOKEN", "")
+LOG_FILE      = "/var/log/safeline-waf/attacks.log"
+STATE_FILE    = "/var/lib/fwallascan2ban/safeline-poll.state"
+PAGE_SIZE     = 100
+
+
+def read_last_id():
+    try:
+        with open(STATE_FILE) as f:
+            return int(f.read().strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def write_last_id(last_id):
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(str(last_id) + "\n")
+    os.replace(tmp, STATE_FILE)
+
+
+def fetch_page(page):
+    url = (f"https://{SAFELINE_HOST}:{SAFELINE_PORT}"
+           f"/api/open/events?page={page}&page_size={PAGE_SIZE}")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(
+        url, headers={"X-SLCE-API-TOKEN": API_TOKEN})
+    with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def main():
+    if not API_TOKEN:
+        print("safeline-poll: SAFELINE_API_TOKEN not set", file=sys.stderr)
+        sys.exit(1)
+
+    last_id     = read_last_id()
+    new_events  = []
+    page        = 1
+
+    while True:
+        try:
+            body = fetch_page(page)
+        except urllib.error.URLError as e:
+            print(f"safeline-poll: API error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        nodes = body.get("data", {}).get("nodes", [])
+        if not nodes:
+            break
+
+        done = False
+        for node in nodes:
+            if node["id"] <= last_id:
+                done = True
+                break
+            if node.get("deny_count", 0) > 0:
+                new_events.append(node)
+
+        if done:
+            break
+
+        total = body.get("data", {}).get("total", 0)
+        if page * PAGE_SIZE >= total:
+            break
+        page += 1
+
+    if not new_events:
+        return
+
+    with open(LOG_FILE, "a") as f:
+        for event in reversed(new_events):   # write oldest first
+            line = json.dumps({
+                "src_ip":      event["ip"],
+                "deny_count":  event.get("deny_count", 1),
+                "action":      "deny",
+                "id":          event["id"],
+            })
+            f.write(line + "\n")
+
+    max_id = max(e["id"] for e in new_events)
+    write_last_id(max(last_id, max_id))
+    print(f"safeline-poll: {len(new_events)} new event(s), max_id={max_id}")
+
+
+if __name__ == "__main__":
+    main()

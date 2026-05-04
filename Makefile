@@ -91,6 +91,41 @@ install: all
 	@echo "Then run: systemctl enable --now fwallascan2ban"
 
 # =============================================================================
+# install-safeline - install the SafeLine WAF event poller
+#
+# Installs a Python polling script + systemd timer that fetches denied-IP
+# events from the SafeLine open API every 60 seconds and writes them to
+# /var/log/safeline-waf/attacks.log for fwallascan2ban to monitor.
+#
+# Prerequisites:
+#   1. Add to /etc/fwallascan2ban/fwallascan2ban.env:
+#        SAFELINE_API_TOKEN=<your SafeLine API token>
+#        SAFELINE_HOST=<SafeLine VM IP>   (default: 10.17.3.20)
+#   2. Add [Log:safeline] section to /etc/fwallascan2ban/fwallascan2ban.conf
+#      (see fwallascan2ban.conf.example for the full example)
+#   3. Enable the timer:
+#        systemctl enable --now safeline-poll.timer
+#   4. Reload fwallascan2ban:
+#        fwallascan2ban-client reload
+# =============================================================================
+install-safeline:
+	@echo "Installing SafeLine WAF event poller..."
+	install -d /var/log/safeline-waf
+	install -m 755 safeline-poll /usr/local/sbin/safeline-poll
+	install -m 644 safeline-poll.service /etc/systemd/system/safeline-poll.service
+	install -m 644 safeline-poll.timer /etc/systemd/system/safeline-poll.timer
+	systemctl daemon-reload
+	@echo ""
+	@echo "SafeLine poller installed. Next steps:"
+	@echo "  1. Add to /etc/fwallascan2ban/fwallascan2ban.env:"
+	@echo "       SAFELINE_API_TOKEN=<your token>"
+	@echo "       SAFELINE_HOST=<SafeLine VM IP>   # if not 10.17.3.20"
+	@echo "  2. Add [Log:safeline] to /etc/fwallascan2ban/fwallascan2ban.conf"
+	@echo "       (see fwallascan2ban.conf.example)"
+	@echo "  3. systemctl enable --now safeline-poll.timer"
+	@echo "  4. fwallascan2ban-client reload"
+
+# =============================================================================
 # Uninstall - remove binaries and systemd service
 # =============================================================================
 uninstall:
@@ -104,6 +139,21 @@ uninstall:
 	@echo "Uninstall complete."
 	@echo "Config and state files in /etc/fwallascan2ban and /var/lib/fwallascan2ban"
 	@echo "have been preserved. Remove manually if desired."
+
+# =============================================================================
+# uninstall-safeline - remove SafeLine poller
+# =============================================================================
+uninstall-safeline:
+	@echo "Uninstalling SafeLine WAF event poller..."
+	systemctl stop safeline-poll.timer safeline-poll.service 2>/dev/null || true
+	systemctl disable safeline-poll.timer 2>/dev/null || true
+	rm -f /usr/local/sbin/safeline-poll
+	rm -f /etc/systemd/system/safeline-poll.service
+	rm -f /etc/systemd/system/safeline-poll.timer
+	systemctl daemon-reload
+	@echo "Uninstall complete."
+	@echo "Log file /var/log/safeline-waf/attacks.log and state file"
+	@echo "/var/lib/fwallascan2ban/safeline-poll.state preserved."
 
 # =============================================================================
 # Clean - remove build artifacts

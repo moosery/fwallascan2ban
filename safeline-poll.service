@@ -1,0 +1,11 @@
+[Unit]
+Description=SafeLine WAF event poller for fwallascan2ban
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/safeline-poll
+EnvironmentFile=/etc/fwallascan2ban/fwallascan2ban.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=safeline-poll
