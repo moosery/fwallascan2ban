@@ -5,7 +5,7 @@ events to a log file that fwallascan2ban monitors as [Log:safeline].
 
 Environment variables (loaded from /etc/fwallascan2ban/fwallascan2ban.env):
   SAFELINE_API_TOKEN  — SafeLine open API token (required)
-  SAFELINE_HOST       — SafeLine host/IP (default: 10.17.3.20)
+  SAFELINE_HOST       — SafeLine host/IP (required)
   SAFELINE_PORT       — SafeLine API port  (default: 9443)
 
 State file:  /var/lib/fwallascan2ban/safeline-poll.state
@@ -24,7 +24,7 @@ import sys
 import urllib.error
 import urllib.request
 
-SAFELINE_HOST = os.environ.get("SAFELINE_HOST", "10.17.3.20")
+SAFELINE_HOST = os.environ.get("SAFELINE_HOST", "")
 SAFELINE_PORT = os.environ.get("SAFELINE_PORT", "9443")
 API_TOKEN     = os.environ.get("SAFELINE_API_TOKEN", "")
 LOG_FILE      = "/var/log/safeline-waf/attacks.log"
@@ -62,6 +62,9 @@ def fetch_page(page):
 def main():
     if not API_TOKEN:
         print("safeline-poll: SAFELINE_API_TOKEN not set", file=sys.stderr)
+        sys.exit(1)
+    if not SAFELINE_HOST:
+        print("safeline-poll: SAFELINE_HOST not set", file=sys.stderr)
         sys.exit(1)
 
     last_id     = read_last_id()

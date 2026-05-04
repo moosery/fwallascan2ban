@@ -94,7 +94,7 @@ Add two variables to `/etc/fwallascan2ban/fwallascan2ban.env`:
 
 ```
 SAFELINE_API_TOKEN=<your SafeLine open platform API token>
-SAFELINE_HOST=<SafeLine VM IP>        # default: 10.17.3.20
+SAFELINE_HOST=<SafeLine VM IP>
 ```
 
 The API token is generated in the SafeLine console under **System → Open Platform**. You only get to see it once; store it securely in the env file (mode 600).
