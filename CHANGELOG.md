@@ -4,6 +4,13 @@ All notable changes to fwallascan2ban are documented here.
 
 ---
 
+## [2.0.3] - 2026-05-04
+
+### Added
+- CHANGELOG.md
+
+---
+
 ## [2.0.2] - 2026-05-04
 
 ### Fixed

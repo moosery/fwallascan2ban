@@ -48,7 +48,7 @@
  * Constants
  * ----------------------------------------------------------------------------- */
 
-#define DAEMON_VERSION          "2.0.2"
+#define DAEMON_VERSION          "2.0.3"
 #define DEFAULT_CONFIG_PATH     "/etc/fwallascan2ban/fwallascan2ban.conf"
 #define SOCKET_PATH             "/run/fwallascan2ban/fwallascan2ban.sock"
 #define DB_PATH                 "/var/lib/fwallascan2ban/banned.db"
