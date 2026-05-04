@@ -86,14 +86,7 @@ With `maxretry = 1`, every SafeLine block event triggers an immediate Firewalla 
 
 #### Installing the SafeLine poller
 
-Add two variables to `/etc/fwallascan2ban/fwallascan2ban.env`:
-
-```
-SAFELINE_API_TOKEN=<your SafeLine open platform API token>
-SAFELINE_HOST=<SafeLine VM IP>
-```
-
-The API token is generated in the SafeLine console under **System → Open Platform**. You only get to see it once; store it securely in the env file (mode 600).
+Uncomment and fill in `SAFELINE_API_TOKEN` and `SAFELINE_HOST` in `/etc/fwallascan2ban/fwallascan2ban.env`. The API token is generated in the SafeLine console under **System → Open Platform** — you only see it once, so copy it immediately.
 
 Then install the poller components:
 
@@ -136,11 +129,18 @@ sudo make uninstall-safeline
 Edit `/etc/fwallascan2ban/fwallascan2ban.env` (chmod 600):
 
 ```
+# Firewalla MSP (required)
 FW_MSP_DOMAIN=yourname.firewalla.net
 FW_MSP_TOKEN=your_personal_access_token
+
+# SafeLine WAF poller (required only if using make install-safeline)
+#SAFELINE_API_TOKEN=your_safeline_api_token_here
+#SAFELINE_HOST=10.0.0.1
 ```
 
 Your MSP domain is the hostname you see in the browser when logged into the MSP portal. Your personal access token is generated under Account Settings in the portal.
+
+The SafeLine variables are only needed if you run `make install-safeline`. See the [SafeLine WAF Integration](#safeline-waf-integration) section for details.
 
 ### Config File
 
