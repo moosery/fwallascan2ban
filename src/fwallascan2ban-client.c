@@ -30,7 +30,7 @@
 #define SOCKET_PATH         "/run/fwallascan2ban/fwallascan2ban.sock"
 #define MAX_CMD_LEN         256
 #define MAX_RESPONSE_LEN    65536
-#define CLIENT_VERSION      "2.0.3"
+#define CLIENT_VERSION      "2.0.4"
 
 /* -----------------------------------------------------------------------------
  * Helpers

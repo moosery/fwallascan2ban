@@ -39,6 +39,8 @@
 #define FW_MAX_RULES            64      /* Maximum number of rules              */
 #define FW_MAX_INDIVIDUAL_RULES 256     /* Max individual Firewalla IP rules    */
 #define FW_API_TIMEOUT_SECS     30      /* libcurl request timeout              */
+#define FW_RETRY_MAX            3       /* Total attempts (1 initial + 2 retries) */
+#define FW_RETRY_DELAY_SECS     5       /* Base retry delay; multiplied by attempt# */
 #define FW_TARGET_LIST_PREFIX   "-"     /* Separator for numbered overflow lists*/
 
 /* -----------------------------------------------------------------------------

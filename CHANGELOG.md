@@ -4,6 +4,14 @@ All notable changes to fwallascan2ban are documented here.
 
 ---
 
+## [2.0.4] - 2026-05-04
+
+### Changed
+- Firewalla MSP API calls now retry on transient failures. On a curl-level network error, HTTP 429 (rate limit), or HTTP 5xx (server error), the request is retried up to 3 times total with delays of 5s and 10s between attempts. Retries are logged to the journal. All API operations (ban, reconciliation, list/rule creation) benefit automatically.
+- `banned --sort-date` output now uses consistent 13-char source column width, matching the default `banned` view. `[auto:tomcat  ]` and `[auto:safeline]` now align correctly.
+
+---
+
 ## [2.0.3] - 2026-05-04
 
 ### Added

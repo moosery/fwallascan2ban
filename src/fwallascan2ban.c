@@ -48,7 +48,7 @@
  * Constants
  * ----------------------------------------------------------------------------- */
 
-#define DAEMON_VERSION          "2.0.3"
+#define DAEMON_VERSION          "2.0.4"
 #define DEFAULT_CONFIG_PATH     "/etc/fwallascan2ban/fwallascan2ban.conf"
 #define SOCKET_PATH             "/run/fwallascan2ban/fwallascan2ban.sock"
 #define DB_PATH                 "/var/lib/fwallascan2ban/banned.db"
@@ -709,7 +709,7 @@ static void handle_client_banned_by_date(DaemonState *state,
         char ts[80];
         format_timestamp(entries[i].timestamp, ts, sizeof(ts));
         pos += (size_t)snprintf(resp + pos, resp_len - pos,
-            "  %-20s [%-11s] %-26s %s\n",
+            "  %-20s [%-13s] %-26s %s\n",
             entries[i].ip, entries[i].source, entries[i].list_name, ts);
     }
 

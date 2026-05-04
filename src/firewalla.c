@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include <unistd.h>
 #include <curl/curl.h>
 
 #include "firewalla.h"
@@ -102,68 +103,90 @@ static int fw_request(FwClient *client, const char *method,
                       const char *endpoint, const char *body,
                       CurlBuf *response, long *status_code)
 {
-    CURL   *curl = (CURL *)client->curl_handle;
-    CURLcode res;
-    char    url[CONFIG_MAX_VALUE + 64];
-    struct curl_slist *headers = NULL;
-    char    auth_header[CONFIG_MAX_VALUE + 32];
+    CURL    *curl = (CURL *)client->curl_handle;
+    CURLcode res  = CURLE_OK;
+    long     sc   = 0;
+    char     url[CONFIG_MAX_VALUE + 64];
 
-    /* Build URL */
     snprintf(url, sizeof(url), "https://%s%s",
              client->msp_domain, endpoint);
 
-    /* Build auth header */
-    snprintf(auth_header, sizeof(auth_header),
-             "Authorization: Token %s", client->msp_token);
+    for (int attempt = 0; attempt < FW_RETRY_MAX; attempt++) {
+        struct curl_slist *headers    = NULL;
+        char               auth_header[CONFIG_MAX_VALUE + 32];
 
-    /* Set headers */
-    headers = curl_slist_append(headers, auth_header);
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, "Accept: application/json");
-
-    /* Configure curl */
-    curl_easy_reset(curl);
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)FW_API_TIMEOUT_SECS);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-
-    /* Set method and body */
-    if (strcmp(method, "GET") == 0) {
-        curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-    } else if (strcmp(method, "POST") == 0) {
-        curl_easy_setopt(curl, CURLOPT_POST, 1L);
-        if (body != NULL) {
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
-        } else {
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, 0L);
+        if (attempt > 0) {
+            int delay = FW_RETRY_DELAY_SECS * attempt;  /* 5s, 10s */
+            fprintf(stderr,
+                    "firewalla: %s %s failed (%s), retrying in %ds "
+                    "(attempt %d/%d)\n",
+                    method, endpoint,
+                    res != CURLE_OK ? curl_easy_strerror(res) : "HTTP error",
+                    delay, attempt + 1, FW_RETRY_MAX);
+            sleep((unsigned int)delay);
+            /* Discard any partial response data from previous attempt */
+            response->size = 0;
+            if (response->data)
+                response->data[0] = '\0';
         }
-    } else if (strcmp(method, "PATCH") == 0) {
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PATCH");
-        if (body != NULL) {
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+
+        snprintf(auth_header, sizeof(auth_header),
+                 "Authorization: Token %s", client->msp_token);
+        headers = curl_slist_append(headers, auth_header);
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, "Accept: application/json");
+
+        curl_easy_reset(curl);
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)FW_API_TIMEOUT_SECS);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+        if (strcmp(method, "GET") == 0) {
+            curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+        } else if (strcmp(method, "POST") == 0) {
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            if (body != NULL) {
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+            } else {
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, 0L);
+            }
+        } else if (strcmp(method, "PATCH") == 0) {
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PATCH");
+            if (body != NULL) {
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+            }
         }
-    }
 
-    /* Perform request */
-    res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
+        res = curl_easy_perform(curl);
+        curl_slist_free_all(headers);
 
-    if (res != CURLE_OK) {
-        fprintf(stderr, "firewalla: curl error on %s %s: %s\n",
-                method, url, curl_easy_strerror(res));
-        return -1;
+        if (res != CURLE_OK) {
+            fprintf(stderr, "firewalla: curl error on %s %s: %s\n",
+                    method, url, curl_easy_strerror(res));
+            continue;
+        }
+
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &sc);
+
+        if (sc == 429 || sc >= 500) {
+            fprintf(stderr, "firewalla: API returned HTTP %ld on %s %s\n",
+                    sc, method, endpoint);
+            continue;
+        }
+
+        break;  /* success or non-retryable error */
     }
 
     if (status_code != NULL)
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, status_code);
+        *status_code = sc;
 
-    return 0;
+    return (res != CURLE_OK) ? -1 : 0;
 }
 
 /* -----------------------------------------------------------------------------
