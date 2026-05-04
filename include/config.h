@@ -28,6 +28,7 @@
 #define CONFIG_MAX_NAME         256     /* Maximum length of a name field         */
 #define CONFIG_MAX_PATTERNS     64      /* Maximum number of failregex patterns   */
 #define CONFIG_MAX_IGNORE       64      /* Maximum number of ignoreregex entries  */
+#define CONFIG_MAX_LOG_SOURCES  8       /* Maximum number of [Log:name] sources   */
 
 /* Default values */
 #define CONFIG_DEFAULT_MAXRETRY             3
@@ -159,14 +160,27 @@ typedef struct {
     int     ignoreregex_count;                                  /* Number of entries    */
 } ConfigFilters;
 
+/* [Log:name] section — one per monitored log source */
+typedef struct {
+    char    name[32];                                           /* Source identifier    */
+    char    log_pattern[CONFIG_MAX_PATH];                       /* Log path (strftime)  */
+    int     maxretry;                                           /* Ban threshold        */
+    int     log_scan_interval;                                  /* Dir scan interval    */
+    char    failregex[CONFIG_MAX_PATTERNS][CONFIG_MAX_VALUE];   /* Fail patterns        */
+    int     failregex_count;                                    /* Number of patterns   */
+} ConfigLogSource;
+
 /* Master config struct - holds all sections */
 typedef struct {
     ConfigMSP               msp;
     ConfigTargetList        target_list;
     ConfigRule              rule;
-    ConfigMonitor           monitor;
+    ConfigMonitor           monitor;        /* Legacy — kept for backward compat parsing */
     ConfigReconciliation    reconciliation;
-    ConfigFilters           filters;
+    ConfigFilters           filters;        /* Legacy — kept for backward compat parsing */
+    ConfigLogSource         log_sources[CONFIG_MAX_LOG_SOURCES]; /* Active log sources */
+    int                     log_source_count;
+    bool                    using_legacy_config; /* true if synthesized from [Monitor]+[Filters] */
     char                    config_path[CONFIG_MAX_PATH]; /* Path to loaded config file */
 } Config;
 

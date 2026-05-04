@@ -83,6 +83,7 @@ install: all
 		echo "Env file already exists, skipping /etc/fwallascan2ban/fwallascan2ban.env"; \
 	fi
 	install -m 644 fwallascan2ban.service /etc/systemd/system/fwallascan2ban.service
+	install -m 644 rsyslog-safeline.conf.example /etc/fwallascan2ban/rsyslog-safeline.conf.example
 	systemctl daemon-reload
 	@echo "Installation complete."
 	@echo "Edit /etc/fwallascan2ban/fwallascan2ban.env with your MSP credentials."

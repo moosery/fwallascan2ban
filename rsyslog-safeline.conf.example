@@ -1,0 +1,75 @@
+# =============================================================================
+# rsyslog-safeline.conf.example
+#
+# rsyslog configuration for receiving SafeLine WAF attack logs via UDP syslog
+# and writing them to a local file that fwallascan2ban can monitor.
+#
+# OVERVIEW
+#   SafeLine WAF runs on a separate VM (or container). When it blocks a
+#   request it emits an RFC-5424 syslog message whose structured-data
+#   payload is a JSON object. This config receives those messages on UDP
+#   port 5140 and strips the syslog framing, writing only the raw JSON
+#   payload to /var/log/safeline-waf/attacks.log.
+#
+#   fwallascan2ban then monitors that file with this failregex:
+#     failregex = "src_ip":"<HOST>"[^}]*"action":"deny"
+#
+# SAFELINE CONFIGURATION
+#   In SafeLine's web UI:
+#     Settings → Log Export → Syslog
+#       Protocol:   UDP
+#       Address:    <this webserver IP>
+#       Port:       5140
+#       Format:     RFC5424
+#
+# INSTALLATION
+#   1. Copy this file to /etc/rsyslog.d/safeline.conf
+#   2. Create the output directory:
+#        mkdir -p /var/log/safeline-waf
+#   3. Reload rsyslog:
+#        systemctl restart rsyslog
+#   4. Enable the [Log:safeline] section in fwallascan2ban.conf and
+#      point log_pattern at /var/log/safeline-waf/attacks.log
+#   5. Restart fwallascan2ban:
+#        systemctl restart fwallascan2ban
+#
+# SECURITY NOTE
+#   Ensure the firewall on this host allows UDP port 5140 ONLY from the
+#   SafeLine VM's IP. Do not expose this port to the internet.
+#
+# LOG ROTATION
+#   To rotate with logrotate, create /etc/logrotate.d/safeline-waf:
+#     /var/log/safeline-waf/attacks.log {
+#         daily
+#         rotate 14
+#         missingok
+#         notifempty
+#         compress
+#         postrotate
+#             /usr/lib/rsyslog/rsyslog-rotate
+#         endscript
+#     }
+# =============================================================================
+
+# Load the UDP input module (safe to load multiple times — rsyslog dedupes)
+module(load="imudp")
+
+# Listen on port 5140 for SafeLine syslog messages
+input(type="imudp" port="5140" ruleset="safeline")
+
+# Extract only the MSG part (the JSON payload) from the RFC-5424 frame.
+# The syslog header, priority, timestamp, host, and tag are discarded.
+template(name="SafelineMsg" type="string" string="%msg:2:$%\n")
+
+ruleset(name="safeline") {
+    action(
+        type="omfile"
+        file="/var/log/safeline-waf/attacks.log"
+        template="SafelineMsg"
+        dirCreateMode="0755"
+        fileCreateMode="0640"
+        asyncWriting="on"
+        flushOnTXEnd="on"
+    )
+    stop
+}

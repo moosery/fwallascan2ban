@@ -325,41 +325,96 @@ rule_auto_create = true
 
 
 # =============================================================================
-# [Monitor] - Log file monitoring settings
+# LOG SOURCES — [Log:name] sections
 #
-# Controls which log file is monitored and how aggressively IPs are banned.
+# Each [Log:name] section defines one log source to monitor. You can have up
+# to 8 sources in a single daemon instance. Each source has its own:
+#   - log_pattern: the file path (strftime codes supported for rotation)
+#   - maxretry: hit threshold before banning (default: 3)
+#   - log_scan_interval: seconds between directory scans for log rotation
+#   - failregex: one or more patterns to match; each must contain <HOST>
+#
+# Ban source tags:
+#   Single source (legacy config): bans tagged [auto]
+#   Multiple sources:              bans tagged [auto:name] (e.g. [auto:tomcat])
+#
+# BACKWARD COMPATIBILITY — Legacy [Monitor] + [Filters] sections
+#   If your config uses the old [Monitor] and [Filters] format (no [Log:name]
+#   sections), it continues to work. The daemon synthesizes a single log source
+#   named "default" from those sections and bans are tagged [auto] as before.
+#   You can migrate to the new format at any time by converting those sections
+#   to a [Log:name] section.
+#
+# SINGLE LOG SOURCE EXAMPLE (Tomcat only)
+# This is equivalent to the legacy [Monitor]+[Filters] format, but uses the
+# new section syntax.
 # =============================================================================
-[Monitor]
 
-# log_pattern - The path and filename pattern of the log file to monitor.
-# Supports strftime-style date format codes for rotating log files:
-#   %Y - 4-digit year  (e.g. 2026)
-#   %m - 2-digit month (e.g. 04)
-#   %d - 2-digit day   (e.g. 24)
-#   %H - 2-digit hour  (e.g. 14)
-#
-# The program evaluates the pattern at startup and whenever the current
-# log file is rotated, automatically following the new file.
-#
-# Examples:
-#   Tomcat daily rotation:
-#     log_pattern = /var/log/tomcat10/access_log.%Y-%m-%d.log
-#   Nginx:
-#     log_pattern = /var/log/nginx/access.log
-#   Apache:
-#     log_pattern = /var/log/apache2/access.log
+[Log:tomcat]
+
+# log_pattern - Path to the log file. Supports strftime date codes.
+# Tomcat daily rotation example (adjust for your Tomcat version/config):
 log_pattern = /var/log/tomcat10/access_log.%Y-%m-%d.log
 
-# maxretry - Number of times an IP must match a failregex pattern before
-# being banned. Counted across the entire run of the program (no time window).
-# An IP that matches any failregex pattern maxretry or more times is added
-# to the target list and permanently blocked at the Firewalla.
-#
-# Examples:
-#   maxretry = 1  - Ban on first offense (aggressive, may cause false positives)
-#   maxretry = 3  - Ban after 3 matches (recommended balance)
-#   maxretry = 5  - More lenient, suitable for high-traffic servers
+# maxretry - Hits before banning (counted since daemon start, no time window).
 maxretry = 3
+
+# log_scan_interval - How often (seconds) to scan the log directory for a
+# newer file (handles log rotation). Set to 0 to disable directory scanning
+# and rely on inotify events only.
+# log_scan_interval = 60
+
+# failregex - Patterns that identify malicious requests.
+# Each pattern must contain <HOST> to capture the IP to potentially ban.
+# Continuation lines must be indented with one or more spaces or tabs.
+failregex = ^<HOST> - - \[.*\] "(GET|POST|HEAD|PROPFIND|CONNECT) .*\.(php|env|git|cgi|sh|sql|asp|aspx).*"
+            ^<HOST> - - \[.*\] "(GET|POST|HEAD|PROPFIND|CONNECT) .*/(wp-admin|blog|shop|cms|wp-content|wp-includes|config|setup|license|SDK|geoserver|admin|well-known|cgi-bin|actuator|hnap|developmentserver|metadata|backup|old|wp|wordpress|new|boaform|.well-known).*"
+            ^<HOST> - - \[.*\] "(GET|POST|HEAD|PROPFIND|CONNECT) .*(mcp|boaform|xmlrpc|sonicos|sslvpn|sonicui|auth1?\.html).*"
+            ^<HOST> - - \[.*\] "CONNECT .*"
+            ^<HOST> - - \[.*\] "OPTIONS .*"
+            ^<HOST> - - \[.*\] "-" 400 (?:-|\d+)
+            ^<HOST> - - \[.*\] "POST / HTTP/1.1" 200
+            ^<HOST> - - \[.*\] "GET /\[.\][a-zA-Z0-9].*" 404
+            ^<HOST> - - \[.*\] "GET .*/manager/html.*" 401 \d+
+            ^<HOST> - - \[.*\] "GET .*/remote/login.*" 401 \d+
+
+
+# =============================================================================
+# MULTI-SOURCE EXAMPLE — Tomcat + SafeLine WAF
+#
+# Uncomment this section if you are also monitoring SafeLine WAF attack logs.
+# SafeLine (on a separate VM) sends syslog to rsyslog on this host; rsyslog
+# writes the raw JSON payload to /var/log/safeline-waf/attacks.log.
+# See rsyslog-safeline.conf.example for the rsyslog configuration.
+#
+# The SafeLine JSON log line looks like:
+#   {"time":1714900000,"src_ip":"1.2.3.4","src_port":54321,...,"action":"deny"}
+#
+# With maxretry=1, every SafeLine block triggers an immediate ban.
+# Bans from this source are tagged [auto:safeline] in the banned list.
+# =============================================================================
+# [Log:safeline]
+# log_pattern        = /var/log/safeline-waf/attacks.log
+# maxretry           = 1
+# log_scan_interval  = 0
+# failregex          = "src_ip":"<HOST>"[^}]*"action":"deny"
+
+
+# =============================================================================
+# [Monitor] - Legacy log file monitoring (single source only)
+#
+# This section is provided for backward compatibility with existing configs.
+# New deployments should use [Log:name] sections above instead.
+#
+# If your config has NO [Log:name] sections, the daemon synthesizes one from
+# [Monitor] + [Filters] automatically. The resulting source is named "default"
+# and bans are tagged [auto] as before.
+#
+# If you have [Log:name] sections, this section is ignored.
+# =============================================================================
+# [Monitor]
+# log_pattern = /var/log/tomcat10/access_log.%Y-%m-%d.log
+# maxretry    = 3
 
 
 # =============================================================================
@@ -440,24 +495,20 @@ on_list_consolidation = consolidate
 
 
 # =============================================================================
-# [Filters] - Pattern matching rules
+# [Filters] - Legacy pattern matching (single source only)
 #
-# failregex and ignoreregex follow a similar format to fail2ban filter files.
+# Used only when no [Log:name] sections are defined. If you have [Log:name]
+# sections above, this section is ignored.
 #
-# failregex:
-#   One or more regular expressions, one per line. Continuation lines must
-#   be indented with at least one space or tab.
-#   <HOST> is a special token that matches an IPv4 or IPv6 address and
-#   captures it as the IP to potentially ban.
-#   A log line matching ANY failregex pattern increments that IP's counter.
-#   When the counter reaches maxretry, the IP is banned.
+# New configs should put failregex directly in each [Log:name] section.
+# ignoreregex belongs here regardless — it applies globally to all sources.
 #
 # ignoreregex:
 #   One or more IP addresses or CIDR ranges to never ban, one per line.
 #   Continuation lines must be indented with at least one space or tab.
 #   IPs matching any entry here are silently ignored even if they match
-#   a failregex pattern. List your own IPs, internal networks, and any
-#   trusted addresses here to prevent accidental self-banning.
+#   a failregex pattern in any log source. List your own IPs, internal
+#   networks, and trusted addresses here to prevent accidental self-banning.
 #   Supports:
 #     - Single IPv4 addresses:  192.168.1.1
 #     - IPv4 CIDR ranges:       192.168.1.0/24
@@ -467,20 +518,6 @@ on_list_consolidation = consolidate
 #   ignoreregex at startup and does not need to be listed here.
 # =============================================================================
 [Filters]
-
-# failregex - Patterns that identify malicious requests.
-# Each pattern must contain <HOST> to capture the offending IP address.
-# Patterns are matched against each log line as it is read.
-failregex = ^<HOST> - - \[.*\] "(GET|POST|HEAD|PROPFIND|CONNECT) .*\.(php|env|git|cgi|sh|sql|asp|aspx).*"
-            ^<HOST> - - \[.*\] "(GET|POST|HEAD|PROPFIND|CONNECT) .*/(wp-admin|blog|shop|cms|wp-content|wp-includes|config|setup|license|SDK|geoserver|admin|well-known|cgi-bin|actuator|hnap|developmentserver|metadata|backup|old|wp|wordpress|new|boaform|.well-known).*"
-            ^<HOST> - - \[.*\] "(GET|POST|HEAD|PROPFIND|CONNECT) .*(mcp|boaform|xmlrpc|sonicos|sslvpn|sonicui|auth1?\.html).*"
-            ^<HOST> - - \[.*\] "CONNECT .*"
-            ^<HOST> - - \[.*\] "OPTIONS .*"
-            ^<HOST> - - \[.*\] "-" 400 (?:-|\d+)
-            ^<HOST> - - \[.*\] "POST / HTTP/1.1" 200
-            ^<HOST> - - \[.*\] "GET /\[.\][a-zA-Z0-9].*" 404
-            ^<HOST> - - \[.*\] "GET .*/manager/html.*" 401 \d+
-            ^<HOST> - - \[.*\] "GET .*/remote/login.*" 401 \d+
 
 # ignoreregex - IP addresses and CIDR ranges to never ban.
 # Add your own public IP, all internal LAN ranges, and any other trusted

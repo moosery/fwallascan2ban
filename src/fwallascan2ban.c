@@ -48,7 +48,7 @@
  * Constants
  * ----------------------------------------------------------------------------- */
 
-#define DAEMON_VERSION          "1.2.3"
+#define DAEMON_VERSION          "1.3.0"
 #define DEFAULT_CONFIG_PATH     "/etc/fwallascan2ban/fwallascan2ban.conf"
 #define SOCKET_PATH             "/run/fwallascan2ban/fwallascan2ban.sock"
 #define DB_PATH                 "/var/lib/fwallascan2ban/banned.db"
@@ -73,10 +73,26 @@
 
 typedef struct {
     char    ip[FW_MAX_IP_LEN];      /* IP address string                */
-    char    source[32];             /* auto, manual, firewalla, etc.    */
+    char    source[48];             /* auto[:name], manual, firewalla…  */
     char    timestamp[32];          /* Human-readable timestamp         */
     bool    active;                 /* false if marked [removed]        */
 } DbEntry;
+
+/* -----------------------------------------------------------------------------
+ * Per-log-source state
+ * ----------------------------------------------------------------------------- */
+
+/* Context passed as userdata to each logmon's line callback */
+typedef struct {
+    void   *state;   /* DaemonState * — void to avoid forward-decl issue */
+    int     source_idx;
+} LogSourceCtx;
+
+typedef struct {
+    LogmonState     logmon;
+    FilterEngine    filter;
+    char            name[32];   /* matches ConfigLogSource.name */
+} LogSource;
 
 /* -----------------------------------------------------------------------------
  * Daemon state - everything in one place
@@ -85,8 +101,9 @@ typedef struct {
 typedef struct {
     Config          config;
     IgnoreList      ignore;
-    FilterEngine    filter;
-    LogmonState     logmon;
+    LogSource       sources[CONFIG_MAX_LOG_SOURCES];
+    int             source_count;
+    LogSourceCtx    source_ctxs[CONFIG_MAX_LOG_SOURCES];
     FwClient        firewalla;
 
     DbEntry         db[DB_MAX_IPS];
@@ -126,6 +143,48 @@ static void handle_sighup(int sig)
 /* -----------------------------------------------------------------------------
  * Local DB functions
  * ----------------------------------------------------------------------------- */
+
+/*
+ * db_migrate_v1 - Detect a v1 (no version header) db and create a backup.
+ * Called before db_load so the original file is preserved if migration runs.
+ * db_save will write the v2 header on the next save.
+ */
+static void db_migrate_v1(void)
+{
+    FILE *fp = fopen(DB_PATH, "r");
+    if (fp == NULL)
+        return;
+
+    bool has_version = false;
+    char line[256];
+    for (int i = 0; i < 5 && fgets(line, sizeof(line), fp) != NULL; i++) {
+        if (strncmp(line, "# db_version:", 13) == 0) {
+            has_version = true;
+            break;
+        }
+    }
+    fclose(fp);
+
+    if (has_version)
+        return;
+
+    /* v1 detected - copy to .v1.bak so the user has a pristine backup */
+    char bak_path[300];
+    snprintf(bak_path, sizeof(bak_path), "%s.v1.bak", DB_PATH);
+
+    FILE *src = fopen(DB_PATH, "r");
+    FILE *dst = fopen(bak_path, "w");
+    if (src != NULL && dst != NULL) {
+        char buf[8192];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), src)) > 0)
+            fwrite(buf, 1, n, dst);
+        printf("db: v1 database backed up to %s (will upgrade to v2 on next save)\n",
+               bak_path);
+    }
+    if (src) fclose(src);
+    if (dst) fclose(dst);
+}
 
 /*
  * db_load - Load banned.db from disk into memory.
@@ -197,6 +256,7 @@ static int db_save(DaemonState *state)
     }
 
     fprintf(fp, "# fwallascan2ban banned.db\n");
+    fprintf(fp, "# db_version: 2\n");
     fprintf(fp, "# format: ip,source,timestamp\n");
 
     for (int i = 0; i < state->db_count; i++) {
@@ -373,9 +433,6 @@ static void handle_client_status(DaemonState *state,
     char   uptime_str[64];
     format_uptime(uptime, uptime_str, sizeof(uptime_str));
 
-    LogmonStatus logmon_status;
-    logmon_get_status(&state->logmon, &logmon_status);
-
     int active_banned = 0;
     for (int i = 0; i < state->db_count; i++) {
         if (state->db[i].active &&
@@ -389,15 +446,28 @@ static void handle_client_status(DaemonState *state,
         "Version:         %s\n"
         "PID:             %d\n"
         "Uptime:          %s\n"
-        "Log file:        %s\n"
         "Lines processed: %lu\n"
         "-------------------------------------------\n"
-        "Target Lists:    %d\n",
+        "Log sources:     %d\n",
         DAEMON_VERSION,
         getpid(),
         uptime_str,
-        logmon_status.current_path,
         state->lines_processed,
+        state->source_count);
+
+    for (int si = 0; si < state->source_count && pos < resp_len; si++) {
+        LogmonStatus st;
+        logmon_get_status(&state->sources[si].logmon, &st);
+        pos += (size_t)snprintf(resp + pos, resp_len - pos,
+            "  [%-14s] %s (%lu lines)\n",
+            state->sources[si].name,
+            st.current_path,
+            st.lines_processed);
+    }
+
+    pos += (size_t)snprintf(resp + pos, resp_len - pos,
+        "-------------------------------------------\n"
+        "Target Lists:    %d\n",
         state->firewalla.list_count);
 
     for (int i = 0; i < state->firewalla.list_count && pos < resp_len; i++) {
@@ -414,9 +484,15 @@ static void handle_client_status(DaemonState *state,
         "-------------------------------------------\n",
         active_banned);
 
-    /* Pending IPs */
-    PendingIP pending[64];
-    int pending_count = filter_get_pending(&state->filter, pending, 64);
+    /* Pending IPs — collect from all filter engines */
+    PendingIP pending[256];
+    int pending_count = 0;
+    for (int si = 0; si < state->source_count; si++) {
+        PendingIP src_pending[64];
+        int n = filter_get_pending(&state->sources[si].filter, src_pending, 64);
+        for (int i = 0; i < n && pending_count < 256; i++)
+            pending[pending_count++] = src_pending[i];
+    }
 
     if (pending_count > 0) {
         pos += (size_t)snprintf(resp + pos, resp_len - pos,
@@ -496,7 +572,7 @@ static void handle_client_banned(DaemonState *state,
             format_timestamp(e ? e->timestamp : "unknown", ts, sizeof(ts));
 
             pos += (size_t)snprintf(resp + pos, resp_len - pos,
-                "  %-20s [%-11s] %-26s %s\n",
+                "  %-20s [%-13s] %-26s %s\n",
                 ip, source, ml->list.name, ts);
 
             if (!is_placeholder)
@@ -526,7 +602,7 @@ static void handle_client_banned(DaemonState *state,
                 char ts[80];
                 format_timestamp(e->timestamp, ts, sizeof(ts));
                 pos += (size_t)snprintf(resp + pos, resp_len - pos,
-                    "  %-20s [%-11s] %s\n", e->ip, e->source, ts);
+                    "  %-20s [%-13s] %s\n", e->ip, e->source, ts);
                 total++;
             }
             pos += (size_t)snprintf(resp + pos, resp_len - pos, "\n");
@@ -639,7 +715,7 @@ static void handle_client_banned_by_date(DaemonState *state,
                 char ts[80];
                 format_timestamp(fw_entries[i].timestamp, ts, sizeof(ts));
                 pos += (size_t)snprintf(resp + pos, resp_len - pos,
-                    "  %-20s [%-11s] %s\n",
+                    "  %-20s [%-13s] %s\n",
                     fw_entries[i].ip, fw_entries[i].source, ts);
             }
             total += fw_count;
@@ -652,28 +728,37 @@ static void handle_client_banned_by_date(DaemonState *state,
 }
 
 /*
- * handle_client_rules - Show active failregex patterns from config.
+ * handle_client_rules - Show active failregex patterns per log source.
  */
 static void handle_client_rules(DaemonState *state,
                                  char *resp, size_t resp_len)
 {
-    int count = state->config.filters.failregex_count;
     size_t pos = 0;
 
     pos += (size_t)snprintf(resp + pos, resp_len - pos,
-        "Active scan rules (%d pattern%s, maxretry=%d)\n"
+        "Active scan rules (%d log source%s)\n"
         "----------------------------------------\n",
-        count, count == 1 ? "" : "s",
-        state->config.monitor.maxretry);
+        state->source_count,
+        state->source_count == 1 ? "" : "s");
 
-    for (int i = 0; i < count && pos < resp_len; i++) {
+    for (int si = 0; si < state->source_count && pos < resp_len; si++) {
+        const ConfigLogSource *src = &state->config.log_sources[si];
         pos += (size_t)snprintf(resp + pos, resp_len - pos,
-            "  [%d] %s\n", i + 1, state->config.filters.failregex[i]);
+            "[Log:%s] — %d pattern%s, maxretry=%d\n",
+            src->name,
+            src->failregex_count,
+            src->failregex_count == 1 ? "" : "s",
+            src->maxretry);
+        for (int i = 0; i < src->failregex_count && pos < resp_len; i++) {
+            pos += (size_t)snprintf(resp + pos, resp_len - pos,
+                "  [%d] %s\n", i + 1, src->failregex[i]);
+        }
+        if (src->failregex_count == 0)
+            pos += (size_t)snprintf(resp + pos, resp_len - pos,
+                "  No patterns configured.\n");
+        if (si + 1 < state->source_count)
+            pos += (size_t)snprintf(resp + pos, resp_len - pos, "\n");
     }
-
-    if (count == 0)
-        pos += (size_t)snprintf(resp + pos, resp_len - pos,
-            "  No patterns configured.\n");
 
     (void)pos;
 }
@@ -685,7 +770,13 @@ static void handle_client_pending(DaemonState *state,
                                    char *resp, size_t resp_len)
 {
     PendingIP pending[256];
-    int count = filter_get_pending(&state->filter, pending, 256);
+    int count = 0;
+    for (int si = 0; si < state->source_count; si++) {
+        PendingIP src_pending[64];
+        int n = filter_get_pending(&state->sources[si].filter, src_pending, 64);
+        for (int i = 0; i < n && count < 256; i++)
+            pending[count++] = src_pending[i];
+    }
     size_t pos = 0;
 
     if (count == 0) {
@@ -728,7 +819,8 @@ static void process_fw_rule_ips(DaemonState *state)
             db_add(state, ip, BAN_SOURCE_FW_RULE);
             changed = true;
         }
-        filter_mark_banned(&state->filter, ip);
+        for (int si = 0; si < state->source_count; si++)
+            filter_mark_banned(&state->sources[si].filter, ip);
     }
     if (changed)
         db_save(state);
@@ -749,7 +841,8 @@ static int do_ban_ip(DaemonState *state, const char *ip, const char *source)
 
     if (result.already_banned) {
         printf("ban: %s already banned\n", ip);
-        filter_mark_banned(&state->filter, ip);
+        for (int si = 0; si < state->source_count; si++)
+            filter_mark_banned(&state->sources[si].filter, ip);
         return 0;
     }
 
@@ -757,8 +850,9 @@ static int do_ban_ip(DaemonState *state, const char *ip, const char *source)
     db_add(state, ip, source);
     db_save(state);
 
-    /* Mark in filter engine */
-    filter_mark_banned(&state->filter, ip);
+    /* Mark in all filter engines */
+    for (int si = 0; si < state->source_count; si++)
+        filter_mark_banned(&state->sources[si].filter, ip);
 
     printf("ban: [%s] %s -> %s\n", source, ip, result.list_name);
 
@@ -859,14 +953,17 @@ static void handle_client_connection(DaemonState *state, int client_fd)
         snprintf(response, MAX_RESPONSE_LEN, "OK: reload requested\n");
 
     } else if (strcmp(cmd, "rescan") == 0) {
-        logmon_request_rescan(&state->logmon, false);
+        for (int si = 0; si < state->source_count; si++)
+            logmon_request_rescan(&state->sources[si].logmon, false);
         snprintf(response, MAX_RESPONSE_LEN,
-                 "OK: rescan requested (switching to newest log file)\n");
+                 "OK: rescan requested on %d source(s)\n", state->source_count);
 
     } else if (strcmp(cmd, "rescan-all") == 0) {
-        logmon_request_rescan(&state->logmon, true);
+        for (int si = 0; si < state->source_count; si++)
+            logmon_request_rescan(&state->sources[si].logmon, true);
         snprintf(response, MAX_RESPONSE_LEN,
-                 "OK: rescan-all requested (reprocessing from beginning)\n");
+                 "OK: rescan-all requested on %d source(s)\n",
+                 state->source_count);
 
     } else {
         snprintf(response, MAX_RESPONSE_LEN,
@@ -887,28 +984,90 @@ static void handle_client_connection(DaemonState *state, int client_fd)
 
 static void on_log_line(const char *line, void *userdata)
 {
-    DaemonState *state = (DaemonState *)userdata;
-    FilterResult result;
+    LogSourceCtx *ctx   = (LogSourceCtx *)userdata;
+    DaemonState  *state = (DaemonState *)ctx->state;
+    LogSource    *src   = &state->sources[ctx->source_idx];
+    FilterResult  result;
 
     state->lines_processed++;
 
-    if (filter_process_line(&state->filter, &state->ignore,
-                             line, &result) != 0)
+    if (filter_process_line(&src->filter, &state->ignore, line, &result) != 0)
         return;
 
     if (!result.matched || result.ignored || result.already_banned)
         return;
 
     if (result.ban_triggered) {
-        printf("filter: ban triggered for %s (hits: %d)\n",
-               result.ip, result.hit_count);
-        do_ban_ip(state, result.ip, BAN_SOURCE_AUTO);
+        /* Use plain "auto" for legacy single-source configs; "auto:<name>"
+         * when multiple sources are configured so the origin is clear. */
+        char source_tag[48];
+        if (state->config.using_legacy_config) {
+            strncpy(source_tag, BAN_SOURCE_AUTO, sizeof(source_tag) - 1);
+        } else {
+            snprintf(source_tag, sizeof(source_tag), "auto:%s", src->name);
+        }
+        printf("filter: [%s] ban triggered for %s (hits: %d)\n",
+               src->name, result.ip, result.hit_count);
+        do_ban_ip(state, result.ip, source_tag);
     }
 }
 
 /* -----------------------------------------------------------------------------
  * Initialization
  * ----------------------------------------------------------------------------- */
+
+/*
+ * init_log_source - Initialize a single LogSource (filter engine + logmon).
+ * Builds a per-source Config overlay so the existing filter_init/logmon_init
+ * APIs are used without modification.
+ */
+static int init_log_source(DaemonState *state, int idx, bool rescan_mode)
+{
+    const ConfigLogSource *src_cfg = &state->config.log_sources[idx];
+    LogSource             *ls      = &state->sources[idx];
+    LogSourceCtx          *ctx     = &state->source_ctxs[idx];
+
+    strncpy(ls->name, src_cfg->name, sizeof(ls->name) - 1);
+
+    ctx->state      = state;
+    ctx->source_idx = idx;
+
+    /* Build a per-source Config overlay for filter_init:
+     * only monitor.maxretry and filters.failregex* are read. */
+    static Config filter_cfg;  /* static — single-threaded, reused per call */
+    filter_cfg                        = state->config;
+    filter_cfg.monitor.maxretry       = src_cfg->maxretry;
+    filter_cfg.filters.failregex_count = src_cfg->failregex_count;
+    for (int i = 0; i < src_cfg->failregex_count; i++)
+        strncpy(filter_cfg.filters.failregex[i], src_cfg->failregex[i],
+                CONFIG_MAX_VALUE - 1);
+
+    if (filter_init(&ls->filter, &filter_cfg) != 0) {
+        fprintf(stderr, "fwallascan2ban: filter_init failed for [Log:%s]\n",
+                src_cfg->name);
+        return -1;
+    }
+
+    /* Build a per-source Config overlay for logmon_init:
+     * only monitor.log_pattern and monitor.log_scan_interval are read. */
+    static Config logmon_cfg;  /* static — reused per call */
+    logmon_cfg                           = state->config;
+    strncpy(logmon_cfg.monitor.log_pattern, src_cfg->log_pattern,
+            CONFIG_MAX_PATH - 1);
+    logmon_cfg.monitor.log_scan_interval = src_cfg->log_scan_interval;
+
+    if (logmon_init(&ls->logmon, &logmon_cfg, on_log_line, ctx) != 0) {
+        fprintf(stderr, "fwallascan2ban: logmon_init failed for [Log:%s]\n",
+                src_cfg->name);
+        filter_free(&ls->filter);
+        return -1;
+    }
+
+    if (rescan_mode)
+        logmon_request_rescan(&ls->logmon, true);
+
+    return 0;
+}
 
 static int daemon_init(DaemonState *state, const char *config_path,
                        bool rescan_mode)
@@ -938,12 +1097,6 @@ static int daemon_init(DaemonState *state, const char *config_path,
         return -1;
     }
 
-    /* Initialize filter engine */
-    if (filter_init(&state->filter, &state->config) != 0) {
-        fprintf(stderr, "fwallascan2ban: filter init failed\n");
-        return -1;
-    }
-
     /* Initialize Firewalla client */
     printf("fwallascan2ban: connecting to Firewalla MSP...\n");
     if (fw_init(&state->firewalla, &state->config) != 0) {
@@ -951,7 +1104,8 @@ static int daemon_init(DaemonState *state, const char *config_path,
         return -1;
     }
 
-    /* Load local db */
+    /* Migrate db from v1 format if needed, then load */
+    db_migrate_v1();
     if (db_load(state) != 0) {
         fprintf(stderr, "fwallascan2ban: db load failed\n");
         return -1;
@@ -987,10 +1141,29 @@ static int daemon_init(DaemonState *state, const char *config_path,
         db_save(state);
     }
 
-    /* Process IPs now covered by Firewalla individual rules */
+    /* Set up Unix domain socket */
+    state->server_sock = setup_socket();
+    if (state->server_sock < 0) {
+        fprintf(stderr, "fwallascan2ban: socket setup failed\n");
+        return -1;
+    }
+
+    /* Initialize all log sources (filter engines + logmons) */
+    int n_sources = state->config.log_source_count;
+    for (int i = 0; i < n_sources; i++) {
+        if (init_log_source(state, i, rescan_mode) != 0) {
+            fprintf(stderr, "fwallascan2ban: failed to init log source %d (%s)\n",
+                    i, state->config.log_sources[i].name);
+            return -1;
+        }
+        state->source_count++;
+    }
+
+    /* Process IPs now covered by Firewalla individual rules
+     * (needs sources initialized so filter_mark_banned covers all engines) */
     process_fw_rule_ips(state);
 
-    /* Seed filter engine with all currently banned IPs */
+    /* Seed all filter engines with currently banned IPs */
     static FwIP banned_ips[DB_MAX_IPS];
     static char banned_list_ids[DB_MAX_IPS][FW_MAX_ID_LEN];
     int banned_count = fw_get_all_banned_ips(&state->firewalla,
@@ -999,36 +1172,18 @@ static int daemon_init(DaemonState *state, const char *config_path,
     static const char *banned_ip_ptrs[DB_MAX_IPS];
     for (int i = 0; i < banned_count; i++)
         banned_ip_ptrs[i] = banned_ips[i].ip;
-    filter_mark_banned_bulk(&state->filter,
-                             banned_ip_ptrs, banned_count);
-
-    /* Set up Unix domain socket */
-    state->server_sock = setup_socket();
-    if (state->server_sock < 0) {
-        fprintf(stderr, "fwallascan2ban: socket setup failed\n");
-        return -1;
-    }
-
-    /* Initialize log monitor */
-    if (logmon_init(&state->logmon, &state->config,
-                    on_log_line, state) != 0) {
-        fprintf(stderr, "fwallascan2ban: logmon init failed\n");
-        return -1;
-    }
-
-    /* If rescan mode requested, reprocess from beginning */
-    if (rescan_mode) {
-        printf("fwallascan2ban: rescan mode enabled - "
-               "reprocessing log from beginning\n");
-        logmon_request_rescan(&state->logmon, true);
-    }
+    for (int si = 0; si < state->source_count; si++)
+        filter_mark_banned_bulk(&state->sources[si].filter,
+                                 banned_ip_ptrs, banned_count);
 
     state->last_reconcile = time(NULL);
     state->running        = true;
 
     printf("fwallascan2ban: initialized successfully\n");
-    printf("fwallascan2ban: monitoring %s\n",
-           state->config.monitor.log_pattern);
+    for (int i = 0; i < state->source_count; i++)
+        printf("fwallascan2ban: monitoring [%s] %s\n",
+               state->sources[i].name,
+               state->config.log_sources[i].log_pattern);
     printf("fwallascan2ban: listening on %s\n", SOCKET_PATH);
 
     return 0;
@@ -1038,8 +1193,10 @@ static void daemon_shutdown(DaemonState *state)
 {
     printf("fwallascan2ban: shutting down...\n");
 
-    logmon_free(&state->logmon);
-    filter_free(&state->filter);
+    for (int i = 0; i < state->source_count; i++) {
+        logmon_free(&state->sources[i].logmon);
+        filter_free(&state->sources[i].filter);
+    }
     ignore_free(&state->ignore);
     fw_free(&state->firewalla);
     config_free(&state->config);
@@ -1071,24 +1228,37 @@ static void run_main_loop(DaemonState *state)
                    state->config.config_path);
 
             static Config new_config;
-            if (config_load(state->config.config_path, &new_config) == 0) {
-                /* Re-init filter engine with new patterns */
-                filter_free(&state->filter);
-                if (filter_init(&state->filter, &new_config) == 0) {
-                    ignore_free(&state->ignore);
-                    ignore_init(&state->ignore, &new_config);
-                    state->config = new_config;
-                    printf("fwallascan2ban: config reloaded, "
-                           "%d failregex patterns active\n",
-                           state->config.filters.failregex_count);
-                } else {
-                    fprintf(stderr, "fwallascan2ban: filter_init failed "
-                            "after reload, keeping old config\n");
-                    filter_init(&state->filter, &state->config);
-                }
-            } else {
+            if (config_load(state->config.config_path, &new_config) != 0) {
                 fprintf(stderr, "fwallascan2ban: config_load failed, "
                         "keeping old config\n");
+            } else {
+                /* Tear down all existing log sources */
+                for (int i = 0; i < state->source_count; i++) {
+                    logmon_free(&state->sources[i].logmon);
+                    filter_free(&state->sources[i].filter);
+                }
+                state->source_count = 0;
+
+                ignore_free(&state->ignore);
+                state->config = new_config;
+                ignore_init(&state->ignore, &state->config);
+
+                /* Re-init each log source from the new config */
+                for (int i = 0; i < state->config.log_source_count; i++) {
+                    if (init_log_source(state, i, false) == 0)
+                        state->source_count++;
+                    else
+                        fprintf(stderr, "fwallascan2ban: reload: failed to "
+                                "init [Log:%s]\n",
+                                state->config.log_sources[i].name);
+                }
+
+                int total_patterns = 0;
+                for (int i = 0; i < state->config.log_source_count; i++)
+                    total_patterns += state->config.log_sources[i].failregex_count;
+                printf("fwallascan2ban: config reloaded — %d source(s), "
+                       "%d total patterns\n",
+                       state->source_count, total_patterns);
             }
 
             /* Re-run reconciliation after reload */
@@ -1101,7 +1271,7 @@ static void run_main_loop(DaemonState *state)
             /* Process IPs now covered by Firewalla individual rules */
             process_fw_rule_ips(state);
 
-            /* Re-seed filter with already-banned IPs so they aren't re-queued */
+            /* Re-seed all filter engines with already-banned IPs */
             static FwIP reload_banned_ips[DB_MAX_IPS];
             static char reload_banned_list_ids[DB_MAX_IPS][FW_MAX_ID_LEN];
             int reload_banned_count = fw_get_all_banned_ips(
@@ -1110,8 +1280,10 @@ static void run_main_loop(DaemonState *state)
             static const char *reload_banned_ptrs[DB_MAX_IPS];
             for (int i = 0; i < reload_banned_count; i++)
                 reload_banned_ptrs[i] = reload_banned_ips[i].ip;
-            filter_mark_banned_bulk(&state->filter,
-                                    reload_banned_ptrs, reload_banned_count);
+            for (int si = 0; si < state->source_count; si++)
+                filter_mark_banned_bulk(&state->sources[si].filter,
+                                        reload_banned_ptrs,
+                                        reload_banned_count);
         }
 
         /* Check periodic reconciliation */
@@ -1131,16 +1303,20 @@ static void run_main_loop(DaemonState *state)
             }
         }
 
-        /* Use select() to monitor both inotify fd and socket fd */
+        /* Use select() to monitor all inotify fds and the socket fd */
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(state->server_sock, &read_fds);
-        if (state->logmon.inotify_fd >= 0)
-            FD_SET(state->logmon.inotify_fd, &read_fds);
 
         int max_fd = state->server_sock;
-        if (state->logmon.inotify_fd > max_fd)
-            max_fd = state->logmon.inotify_fd;
+        for (int si = 0; si < state->source_count; si++) {
+            int ifd = state->sources[si].logmon.inotify_fd;
+            if (ifd >= 0) {
+                FD_SET(ifd, &read_fds);
+                if (ifd > max_fd)
+                    max_fd = ifd;
+            }
+        }
 
         struct timeval tv;
         tv.tv_sec  = 1;
@@ -1163,8 +1339,9 @@ static void run_main_loop(DaemonState *state)
                 handle_client_connection(state, client_fd);
         }
 
-        /* Poll log file for new lines */
-        logmon_poll(&state->logmon, 0);
+        /* Poll all log sources for new lines */
+        for (int si = 0; si < state->source_count; si++)
+            logmon_poll(&state->sources[si].logmon, 0);
     }
 }
 
@@ -1243,7 +1420,10 @@ int main(int argc, char *argv[])
     if (debug_mode) {
         config_dump(&state.config);
         ignore_dump(&state.ignore);
-        filter_dump(&state.filter);
+        for (int i = 0; i < state.source_count; i++) {
+            printf("--- Filter [Log:%s] ---\n", state.sources[i].name);
+            filter_dump(&state.sources[i].filter);
+        }
         fw_dump(&state.firewalla);
         daemon_shutdown(&state);
         return 0;

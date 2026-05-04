@@ -26,7 +26,8 @@ typedef enum {
     SECTION_RULE,
     SECTION_MONITOR,
     SECTION_RECONCILIATION,
-    SECTION_FILTERS
+    SECTION_FILTERS,
+    SECTION_LOG         /* [Log:name] — per-source log config */
 } Section;
 
 /*
@@ -453,6 +454,44 @@ static int handle_filters(Config *config, const char *key, const char *val,
     return 0;
 }
 
+static int handle_log_source(Config *config, int src_idx, const char *key,
+                              const char *val, char *last_filter_key,
+                              size_t lk_size)
+{
+    ConfigLogSource *src = &config->log_sources[src_idx];
+
+    if (strcmp(key, "log_pattern") == 0 || strcmp(key, "path") == 0) {
+        strncpy(src->log_pattern, val, CONFIG_MAX_PATH - 1);
+    } else if (strcmp(key, "maxretry") == 0) {
+        src->maxretry = atoi(val);
+        if (src->maxretry < 1) {
+            fprintf(stderr, "config: [Log:%s] maxretry must be >= 1 (using 3)\n",
+                    src->name);
+            src->maxretry = CONFIG_DEFAULT_MAXRETRY;
+        }
+    } else if (strcmp(key, "log_scan_interval") == 0) {
+        src->log_scan_interval = atoi(val);
+        if (src->log_scan_interval < 0) {
+            fprintf(stderr, "config: [Log:%s] log_scan_interval must be >= 0 "
+                    "(using 60)\n", src->name);
+            src->log_scan_interval = CONFIG_DEFAULT_LOG_SCAN_INTERVAL;
+        }
+    } else if (strcmp(key, "failregex") == 0) {
+        strncpy(last_filter_key, key, lk_size - 1);
+        if (src->failregex_count >= CONFIG_MAX_PATTERNS) {
+            fprintf(stderr, "config: [Log:%s] too many failregex patterns "
+                    "(max %d)\n", src->name, CONFIG_MAX_PATTERNS);
+            return -1;
+        }
+        strncpy(src->failregex[src->failregex_count], val, CONFIG_MAX_VALUE - 1);
+        src->failregex_count++;
+    } else {
+        fprintf(stderr, "config: unknown key in [Log:%s]: %s\n",
+                src->name, key);
+    }
+    return 0;
+}
+
 /* -----------------------------------------------------------------------------
  * Public API
  * ----------------------------------------------------------------------------- */
@@ -477,8 +516,9 @@ int config_load(const char *path, Config *config)
         return -1;
     }
 
-    Section current_section    = SECTION_NONE;
-    char    last_filter_key[64] = "";
+    Section current_section      = SECTION_NONE;
+    char    last_filter_key[64]  = "";
+    int     current_log_src_idx  = -1;
 
     while (fgets(line_buf, sizeof(line_buf), fp) != NULL) {
         line_num++;
@@ -488,8 +528,9 @@ int config_load(const char *path, Config *config)
         if (len > 0 && line_buf[len - 1] == '\n')
             line_buf[len - 1] = '\0';
 
-        /* Handle multi-line continuation for [Filters] */
-        if (current_section == SECTION_FILTERS &&
+        /* Handle multi-line continuation for [Filters] and [Log:name] */
+        if ((current_section == SECTION_FILTERS ||
+             current_section == SECTION_LOG) &&
             is_continuation(line_buf) &&
             last_filter_key[0] != '\0')
         {
@@ -497,10 +538,24 @@ int config_load(const char *path, Config *config)
             if (*trimmed == '\0' || *trimmed == '#')
                 continue;
 
-            if (strcmp(last_filter_key, "failregex") == 0) {
-                rc = append_failregex(config, trimmed);
-            } else if (strcmp(last_filter_key, "ignoreregex") == 0) {
-                rc = append_ignoreregex(config, trimmed);
+            if (current_section == SECTION_FILTERS) {
+                if (strcmp(last_filter_key, "failregex") == 0) {
+                    rc = append_failregex(config, trimmed);
+                } else if (strcmp(last_filter_key, "ignoreregex") == 0) {
+                    rc = append_ignoreregex(config, trimmed);
+                }
+            } else { /* SECTION_LOG */
+                if (strcmp(last_filter_key, "failregex") == 0 &&
+                    current_log_src_idx >= 0)
+                {
+                    ConfigLogSource *src =
+                        &config->log_sources[current_log_src_idx];
+                    if (src->failregex_count < CONFIG_MAX_PATTERNS) {
+                        strncpy(src->failregex[src->failregex_count],
+                                trimmed, CONFIG_MAX_VALUE - 1);
+                        src->failregex_count++;
+                    }
+                }
             }
             if (rc != 0) goto done;
             continue;
@@ -515,8 +570,41 @@ int config_load(const char *path, Config *config)
 
         /* Section header */
         if (line[0] == '[') {
-            current_section = parse_section(line);
             last_filter_key[0] = '\0';
+
+            /* Check for [Log:name] before regular sections */
+            if (strncasecmp(line, "[Log:", 5) == 0) {
+                char *start = line + 5;
+                char *end   = strchr(start, ']');
+                if (end != NULL && end > start) {
+                    int new_idx = config->log_source_count;
+                    if (new_idx >= CONFIG_MAX_LOG_SOURCES) {
+                        fprintf(stderr, "config: too many [Log:*] sections "
+                                "(max %d)\n", CONFIG_MAX_LOG_SOURCES);
+                    } else {
+                        ConfigLogSource *src = &config->log_sources[new_idx];
+                        size_t nlen = (size_t)(end - start);
+                        if (nlen >= sizeof(src->name))
+                            nlen = sizeof(src->name) - 1;
+                        strncpy(src->name, start, nlen);
+                        src->name[nlen] = '\0';
+                        /* Set per-source defaults */
+                        src->maxretry          = CONFIG_DEFAULT_MAXRETRY;
+                        src->log_scan_interval = CONFIG_DEFAULT_LOG_SCAN_INTERVAL;
+                        config->log_source_count++;
+                        current_log_src_idx = new_idx;
+                        current_section = SECTION_LOG;
+                    }
+                } else {
+                    fprintf(stderr, "config: malformed section header: %s\n",
+                            line);
+                    current_section = SECTION_NONE;
+                }
+                continue;
+            }
+
+            current_section     = parse_section(line);
+            current_log_src_idx = -1;
             continue;
         }
 
@@ -568,6 +656,10 @@ int config_load(const char *path, Config *config)
                                     last_filter_key,
                                     sizeof(last_filter_key));
                 break;
+            case SECTION_LOG:
+                rc = handle_log_source(config, current_log_src_idx, key, val,
+                                       last_filter_key, sizeof(last_filter_key));
+                break;
             case SECTION_NONE:
                 fprintf(stderr, "config: line %d: key outside section: %s\n",
                         line_num, key);
@@ -576,6 +668,25 @@ int config_load(const char *path, Config *config)
 
         if (rc != 0)
             goto done;
+    }
+
+    /* Synthesize a single log source from legacy [Monitor]+[Filters] if no
+     * [Log:name] sections were found. This ensures backward compatibility. */
+    if (rc == 0 && config->log_source_count == 0 &&
+        config->monitor.log_pattern[0] != '\0')
+    {
+        ConfigLogSource *src = &config->log_sources[0];
+        strncpy(src->name, "default", sizeof(src->name) - 1);
+        strncpy(src->log_pattern, config->monitor.log_pattern,
+                CONFIG_MAX_PATH - 1);
+        src->maxretry          = config->monitor.maxretry;
+        src->log_scan_interval = config->monitor.log_scan_interval;
+        src->failregex_count   = config->filters.failregex_count;
+        for (int i = 0; i < config->filters.failregex_count; i++)
+            strncpy(src->failregex[i], config->filters.failregex[i],
+                    CONFIG_MAX_VALUE - 1);
+        config->log_source_count   = 1;
+        config->using_legacy_config = true;
     }
 
 done:
@@ -629,20 +740,31 @@ int config_validate(const Config *config)
         rc = -1;
     }
 
-    /* [Monitor] */
-    if (config->monitor.log_pattern[0] == '\0') {
-        fprintf(stderr, "config: [Monitor] log_pattern is required\n");
+    /* Log sources (either from [Log:name] sections or synthesized from legacy
+     * [Monitor]+[Filters]) */
+    if (config->log_source_count == 0) {
+        fprintf(stderr, "config: no log sources configured — add [Log:name] "
+                "sections or legacy [Monitor]+[Filters] sections\n");
         rc = -1;
-    }
-    if (config->monitor.maxretry < 1) {
-        fprintf(stderr, "config: [Monitor] maxretry must be >= 1\n");
-        rc = -1;
-    }
-
-    /* [Filters] */
-    if (config->filters.failregex_count == 0) {
-        fprintf(stderr, "config: [Filters] at least one failregex is required\n");
-        rc = -1;
+    } else {
+        for (int i = 0; i < config->log_source_count; i++) {
+            const ConfigLogSource *src = &config->log_sources[i];
+            if (src->log_pattern[0] == '\0') {
+                fprintf(stderr, "config: [Log:%s] log_pattern is required\n",
+                        src->name);
+                rc = -1;
+            }
+            if (src->failregex_count == 0) {
+                fprintf(stderr, "config: [Log:%s] at least one failregex "
+                        "is required\n", src->name);
+                rc = -1;
+            }
+            if (src->maxretry < 1) {
+                fprintf(stderr, "config: [Log:%s] maxretry must be >= 1\n",
+                        src->name);
+                rc = -1;
+            }
+        }
     }
 
     return rc;
@@ -689,13 +811,27 @@ void config_dump(const Config *config)
     printf("  on_miss_rule:%d\n", config->reconciliation.on_missing_rule);
     printf("  on_consolid:%d\n",  config->reconciliation.on_list_consolidation);
 
-    printf("[Filters]\n");
+    printf("[Filters] (legacy)\n");
     printf("  failregex count  : %d\n", config->filters.failregex_count);
     for (int i = 0; i < config->filters.failregex_count; i++)
         printf("    [%d] %s\n", i, config->filters.failregex[i]);
     printf("  ignoreregex count: %d\n", config->filters.ignoreregex_count);
     for (int i = 0; i < config->filters.ignoreregex_count; i++)
         printf("    [%d] %s\n", i, config->filters.ignoreregex[i]);
+
+    printf("Log sources: %d (legacy=%s)\n",
+           config->log_source_count,
+           config->using_legacy_config ? "yes" : "no");
+    for (int i = 0; i < config->log_source_count; i++) {
+        const ConfigLogSource *src = &config->log_sources[i];
+        printf("  [Log:%s]\n", src->name);
+        printf("    log_pattern  : %s\n", src->log_pattern);
+        printf("    maxretry     : %d\n", src->maxretry);
+        printf("    scan_interval: %d\n", src->log_scan_interval);
+        printf("    failregex cnt: %d\n", src->failregex_count);
+        for (int j = 0; j < src->failregex_count; j++)
+            printf("      [%d] %s\n", j, src->failregex[j]);
+    }
 
     printf("=====================================\n");
 }

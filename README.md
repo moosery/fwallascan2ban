@@ -47,6 +47,41 @@ This installs:
 - `/etc/fwallascan2ban/fwallascan2ban.env` (from example, if not already present)
 - `/etc/systemd/system/fwallascan2ban.service`
 
+## Multiple Log Sources
+
+A single daemon instance can monitor up to 8 log files simultaneously using named `[Log:name]` sections in the config. Each source has its own file path, `maxretry`, and `failregex` patterns.
+
+```ini
+[Log:tomcat]
+log_pattern  = /var/log/tomcat10/access_log.%Y-%m-%d.log
+maxretry     = 3
+failregex    = ^<HOST> - - \[.*\] "(GET|POST|HEAD) .*\.(php|env|git).*"
+               ^<HOST> - - \[.*\] "CONNECT .*"
+
+[Log:safeline]
+log_pattern  = /var/log/safeline-waf/attacks.log
+maxretry     = 1
+failregex    = "src_ip":"<HOST>"[^}]*"action":"deny"
+```
+
+When multiple sources are configured, bans carry a source-qualified tag: `auto:tomcat`, `auto:safeline`, etc. Single-source configs (and legacy configs) continue to use the plain `auto` tag.
+
+### Backward Compatibility
+
+Existing configs using the `[Monitor]` and `[Filters]` sections continue to work without any changes. The daemon synthesizes a `default` log source from those sections automatically and bans are still tagged `auto`.
+
+### SafeLine WAF Integration
+
+SafeLine WAF (running on a separate VM) can forward attack events as syslog to rsyslog on the webserver, which writes the raw JSON to a local file. See `rsyslog-safeline.conf.example` for the rsyslog configuration. SafeLine log lines look like:
+
+```
+{"time":1714900000,"src_ip":"1.2.3.4","src_port":54321,...,"action":"deny"}
+```
+
+With `maxretry = 1`, every SafeLine block event results in an immediate ban at the Firewalla.
+
+> **Note:** The current log scanner processes single-line records only. Both Tomcat access logs and SafeLine JSON events are single-line, so both work correctly with the current implementation.
+
 ## Configuration
 
 ### Credentials
@@ -71,15 +106,22 @@ Key settings:
 | `box_name` | Friendly name of your Firewalla box as shown in MSP | required |
 | `target_list_name` | Name of the MSP target list to add banned IPs to | required |
 | `max_targets` | Max IPs per target list before overflow list is created | 1000 |
-| `maxretry` | Number of pattern matches before an IP is banned | 3 |
-| `log_pattern` | Path to the log file, with strftime codes for rotation | required |
 | `reconcile_interval` | Seconds between periodic reconciliation passes | 3600 |
+
+Per log-source settings (in each `[Log:name]` section):
+
+| Setting | Description | Default |
+|---|---|---|
+| `log_pattern` | Path to the log file, with strftime codes for rotation | required |
+| `maxretry` | Number of pattern matches before an IP is banned | 3 |
+| `log_scan_interval` | Seconds between directory scans for log rotation | 60 |
+| `failregex` | One or more patterns to match; each must contain `<HOST>` | required |
 
 ### Failregex Patterns
 
 Patterns use standard PCRE2 syntax. The special token `<HOST>` is replaced at startup with a capture group matching IPv4 and IPv6 addresses. Syntax is compatible with fail2ban filter files.
 
-Example patterns for Tomcat/web servers are included in the example config:
+Example patterns for Tomcat/web servers (place in `[Log:tomcat]`):
 
 ```ini
 failregex = ^<HOST> - - \[.*\] "(GET|POST|HEAD) .*\.(php|env|git|cgi|sh|sql).*"
@@ -89,11 +131,18 @@ failregex = ^<HOST> - - \[.*\] "(GET|POST|HEAD) .*\.(php|env|git|cgi|sh|sql).*"
             ^<HOST> - - \[.*\] "GET .*/manager/html.*" 401 \d+
 ```
 
-### Ignore List
-
-Add your own IP, internal networks, and trusted addresses to `ignoreregex` to prevent accidental banning. Supports single IPs and CIDR ranges. The placeholder IP and loopback addresses are always ignored automatically.
+Example pattern for SafeLine WAF (place in `[Log:safeline]`):
 
 ```ini
+failregex = "src_ip":"<HOST>"[^}]*"action":"deny"
+```
+
+### Ignore List
+
+Add your own IP, internal networks, and trusted addresses to `ignoreregex` in the `[Filters]` section to prevent accidental banning. The ignore list applies globally to all log sources. Supports single IPs and CIDR ranges. The placeholder IP and loopback addresses are always ignored automatically.
+
+```ini
+[Filters]
 ignoreregex = 192.168.1.0/24
               203.0.113.10
 ```
@@ -163,11 +212,17 @@ This means:
 - **Unbanning** — `fwallascan2ban-client unban <ip>` removes the IP from the target list and local db, but any individual Firewalla block rule is not touched. The IP remains blocked at the Firewalla level until that rule is removed manually via the MSP portal.
 - **If Firewalla removes the individual rule** — the `fw-rule` tag persists in the local db until the next log match or manual `ban` command re-adds the IP through the normal path.
 
+## Database Versioning
+
+The local `banned.db` file includes a `# db_version: 2` header as of v1.3.0. On the first startup after upgrading from v1.2.x, the daemon automatically detects the old format and copies the existing database to `banned.db.v1.bak` before continuing. The original data is preserved and the database is upgraded transparently.
+
 ## Files
 
 | Path | Description |
 |---|---|
 | `/etc/fwallascan2ban/fwallascan2ban.conf` | Main configuration file |
 | `/etc/fwallascan2ban/fwallascan2ban.env` | Credentials (MSP domain and token) |
+| `/etc/fwallascan2ban/rsyslog-safeline.conf.example` | rsyslog config for SafeLine WAF syslog |
 | `/var/lib/fwallascan2ban/banned.db` | Local persistent state of all banned IPs |
+| `/var/lib/fwallascan2ban/banned.db.v1.bak` | Backup of pre-v1.3.0 database (created once on upgrade) |
 | `/run/fwallascan2ban/fwallascan2ban.sock` | Unix socket for client communication |
