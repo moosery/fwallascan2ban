@@ -384,7 +384,7 @@ failregex = ^<HOST> - - \[.*\] "(GET|POST|HEAD|PROPFIND|CONNECT) .*\.(php|env|gi
 # log_pattern        = /var/log/safeline-waf/attacks.log
 # maxretry           = 1
 # log_scan_interval  = 0
-# failregex          = "src_ip":"<HOST>"[^}]*"action":"deny"
+# failregex          = "src_ip":\s*"<HOST>"[^}]*"action":\s*"deny"
 
 
 # =============================================================================

@@ -61,7 +61,7 @@ failregex    = ^<HOST> - - \[.*\] "(GET|POST|HEAD) .*\.(php|env|git).*"
 [Log:safeline]
 log_pattern  = /var/log/safeline-waf/attacks.log
 maxretry     = 1
-failregex    = "src_ip":"<HOST>"[^}]*"action":"deny"
+failregex    = "src_ip":\s*"<HOST>"[^}]*"action":\s*"deny"
 ```
 
 Bans carry a source-qualified tag: `auto:tomcat`, `auto:safeline`, etc.
@@ -79,7 +79,7 @@ A lightweight Python script (`safeline-poll`) is installed as a systemd timer th
 Log lines written to the file look like:
 
 ```json
-{"src_ip":"1.2.3.4","deny_count":1,"action":"deny","id":34}
+{"src_ip": "1.2.3.4", "deny_count": 1, "action": "deny", "id": 34}
 ```
 
 With `maxretry = 1`, every SafeLine block event triggers an immediate Firewalla ban.
@@ -106,7 +106,7 @@ Add a `[Log:safeline]` section to `/etc/fwallascan2ban/fwallascan2ban.conf`:
 path             = /var/log/safeline-waf/attacks.log
 maxretry         = 1
 log_scan_interval = 0
-failregex        = "src_ip":"<HOST>"[^}]*"action":"deny"
+failregex        = "src_ip":\s*"<HOST>"[^}]*"action":\s*"deny"
 ```
 
 Enable and start the timer, then reload fwallascan2ban to pick up the new config section:
@@ -182,7 +182,7 @@ failregex = ^<HOST> - - \[.*\] "(GET|POST|HEAD) .*\.(php|env|git|cgi|sh|sql).*"
 Example pattern for SafeLine WAF (place in `[Log:safeline]`):
 
 ```ini
-failregex = "src_ip":"<HOST>"[^}]*"action":"deny"
+failregex = "src_ip":\s*"<HOST>"[^}]*"action":\s*"deny"
 ```
 
 ### Ignore List
