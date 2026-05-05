@@ -228,6 +228,8 @@ The `fwallascan2ban-client` tool communicates with the running daemon over a Uni
 | `fwallascan2ban-client rules` | Show active failregex scan patterns and maxretry threshold |
 | `fwallascan2ban-client ban <ip>` | Manually ban an IP immediately |
 | `fwallascan2ban-client unban <ip>` | Remove a banned IP from Firewalla and local db |
+| `fwallascan2ban-client isbanned <ip>` | Check whether an IP is currently banned; shows source and timestamp if so |
+| `fwallascan2ban-client testline '<log line>'` | Test a raw log line against all configured failregex patterns (read-only — does not affect hit counters); reports matched source, extracted IP, the specific pattern that matched, and the IP's current ban/hit status |
 | `fwallascan2ban-client reload` | Reload config and trigger reconciliation (same as SIGHUP) |
 | `fwallascan2ban-client rescan` | Switch to the newest log file |
 | `fwallascan2ban-client rescan-all` | Reprocess the current log file from the beginning |
