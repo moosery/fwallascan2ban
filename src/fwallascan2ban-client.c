@@ -28,9 +28,9 @@
  * ----------------------------------------------------------------------------- */
 
 #define SOCKET_PATH         "/run/fwallascan2ban/fwallascan2ban.sock"
-#define MAX_CMD_LEN         256
+#define MAX_CMD_LEN         4096
 #define MAX_RESPONSE_LEN    65536
-#define CLIENT_VERSION      "2.0.4"
+#define CLIENT_VERSION      "2.0.5"
 
 /* -----------------------------------------------------------------------------
  * Helpers
@@ -47,6 +47,8 @@ static void print_usage(const char *prog)
     printf("  banned --sort-date --fw-rules  Both options combined\n");
     printf("  pending         List IPs approaching the ban threshold\n");
     printf("  rules           Show active failregex scan patterns\n");
+    printf("  isbanned <ip>   Check whether an IP is currently banned\n");
+    printf("  testline <line> Test a raw log line against configured failregex patterns\n");
     printf("  ban <ip>        Manually ban an IP address immediately\n");
     printf("  unban <ip>      Remove a banned IP from the target list\n");
     printf("  reload          Reload config and run reconciliation\n");
@@ -216,6 +218,26 @@ int main(int argc, char *argv[])
             return 1;
         }
         snprintf(cmd, sizeof(cmd), "unban %s", argv[2]);
+        return send_command(cmd) == 0 ? 0 : 1;
+
+    } else if (strcmp(command, "isbanned") == 0) {
+        if (argc < 3) {
+            fprintf(stderr,
+                    "error: 'isbanned' requires an IP address argument\n");
+            fprintf(stderr, "Usage: %s isbanned <ip>\n", argv[0]);
+            return 1;
+        }
+        snprintf(cmd, sizeof(cmd), "isbanned %s", argv[2]);
+        return send_command(cmd) == 0 ? 0 : 1;
+
+    } else if (strcmp(command, "testline") == 0) {
+        if (argc < 3) {
+            fprintf(stderr,
+                    "error: 'testline' requires a log line argument\n");
+            fprintf(stderr, "Usage: %s testline '<log line>'\n", argv[0]);
+            return 1;
+        }
+        snprintf(cmd, sizeof(cmd), "testline %s", argv[2]);
         return send_command(cmd) == 0 ? 0 : 1;
 
     } else {

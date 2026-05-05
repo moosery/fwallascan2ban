@@ -4,6 +4,14 @@ All notable changes to fwallascan2ban are documented here.
 
 ---
 
+## [2.0.5] - 2026-05-05
+
+### Added
+- `isbanned <ip>` client command — quickly check whether a specific IP is currently banned. Returns `yes: <ip> is banned  [<source>]  <timestamp>` or `no: <ip> is not banned`. Works for all source types (auto-banned, manually banned, fw-rule).
+- `testline '<log line>'` client command — test a raw log line against all configured failregex patterns without affecting hit counters. Reports the matched source, extracted IP, the specific pattern that matched, and the IP's current ban status and hit count. Useful for verifying pattern configuration and diagnosing why a line did or did not trigger a ban.
+
+---
+
 ## [2.0.4] - 2026-05-04
 
 ### Changed

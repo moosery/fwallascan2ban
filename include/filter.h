@@ -179,6 +179,25 @@ void filter_mark_banned_bulk(FilterEngine *engine, const char **ips, int count);
 int filter_get_pending(const FilterEngine *engine, PendingIP *pending, int max);
 
 /*
+ * filter_test_line - Test a log line against patterns without modifying state.
+ *
+ * Identical to filter_process_line but read-only: does not increment hit
+ * counters or engine statistics. Used by the testline client command.
+ *
+ * Parameters:
+ *   engine  - Pointer to an initialized FilterEngine
+ *   ignore  - Pointer to an initialized IgnoreList
+ *   line    - Log line string to test
+ *   result  - Pointer to a FilterResult to populate
+ *
+ * Returns:
+ *   0 on success (result populated)
+ *  -1 on error
+ */
+int filter_test_line(FilterEngine *engine, const IgnoreList *ignore,
+                     const char *line, FilterResult *result);
+
+/*
  * filter_dump - Print filter engine state to stdout for debugging.
  *
  * Parameters:

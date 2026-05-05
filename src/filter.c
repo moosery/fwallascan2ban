@@ -287,6 +287,69 @@ int filter_process_line(FilterEngine *engine, const IgnoreList *ignore,
     return 0;
 }
 
+int filter_test_line(FilterEngine *engine, const IgnoreList *ignore,
+                     const char *line, FilterResult *result)
+{
+    memset(result, 0, sizeof(FilterResult));
+
+    for (int i = 0; i < engine->pattern_count; i++) {
+        FilterPattern *pat = &engine->patterns[i];
+
+        pcre2_match_data *match_data =
+            pcre2_match_data_create_from_pattern(pat->compiled, NULL);
+        if (match_data == NULL) {
+            fprintf(stderr, "filter: out of memory creating match data\n");
+            return -1;
+        }
+
+        int rc = pcre2_match(pat->compiled, (PCRE2_SPTR)line,
+                             PCRE2_ZERO_TERMINATED, 0, 0, match_data, NULL);
+        if (rc == PCRE2_ERROR_NOMATCH) {
+            pcre2_match_data_free(match_data);
+            continue;
+        }
+        if (rc < 0) {
+            pcre2_match_data_free(match_data);
+            return -1;
+        }
+
+        PCRE2_SIZE *ov  = pcre2_get_ovector_pointer(match_data);
+        int         grp = pat->host_group;
+        if (ov[2 * grp] == PCRE2_UNSET) {
+            pcre2_match_data_free(match_data);
+            continue;
+        }
+
+        size_t ip_len = ov[2 * grp + 1] - ov[2 * grp];
+        if (ip_len >= FILTER_MAX_IP_LEN)
+            ip_len = FILTER_MAX_IP_LEN - 1;
+
+        strncpy(result->ip, line + ov[2 * grp], ip_len);
+        result->ip[ip_len] = '\0';
+        pcre2_match_data_free(match_data);
+
+        result->matched       = true;
+        result->pattern_index = i;
+
+        if (ignore_check(ignore, result->ip)) {
+            result->ignored = true;
+            return 0;
+        }
+
+        /* Read-only hit lookup — no side effects */
+        HitEntry *entry = hit_find(engine, result->ip);
+        if (entry != NULL) {
+            result->hit_count     = entry->hits;
+            result->already_banned = entry->banned;
+        }
+
+        return 0;
+    }
+
+    result->matched = false;
+    return 0;
+}
+
 void filter_mark_banned(FilterEngine *engine, const char *ip)
 {
     HitEntry *entry = hit_get_or_create(engine, ip);

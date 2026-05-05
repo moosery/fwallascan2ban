@@ -48,14 +48,14 @@
  * Constants
  * ----------------------------------------------------------------------------- */
 
-#define DAEMON_VERSION          "2.0.4"
+#define DAEMON_VERSION          "2.0.5"
 #define DEFAULT_CONFIG_PATH     "/etc/fwallascan2ban/fwallascan2ban.conf"
 #define SOCKET_PATH             "/run/fwallascan2ban/fwallascan2ban.sock"
 #define DB_PATH                 "/var/lib/fwallascan2ban/banned.db"
 #define SOCKET_DIR              "/run/fwallascan2ban"
 #define DB_DIR                  "/var/lib/fwallascan2ban"
 #define SOCKET_BACKLOG          8
-#define MAX_CLIENT_MSG          256
+#define MAX_CLIENT_MSG          4096
 #define MAX_RESPONSE_LEN        65536
 #define DB_MAX_IPS              (FW_MAX_TARGET_LISTS * FW_MAX_IPS_PER_LIST)
 
@@ -835,6 +835,59 @@ static void handle_client_pending(DaemonState *state,
     (void)pos;
 }
 
+static void handle_client_isbanned(DaemonState *state, const char *ip,
+                                    char *response, size_t resp_len)
+{
+    DbEntry *e = db_find(state, ip);
+    if (e == NULL || !e->active)
+        snprintf(response, resp_len, "no: %s is not banned\n", ip);
+    else
+        snprintf(response, resp_len, "yes: %s is banned  [%s]  %s\n",
+                 ip, e->source, e->timestamp);
+}
+
+static void handle_client_testline(DaemonState *state, const char *line,
+                                    char *response, size_t resp_len)
+{
+    for (int si = 0; si < state->source_count; si++) {
+        LogSource    *src = &state->sources[si];
+        FilterResult  result;
+
+        if (filter_test_line(&src->filter, &state->ignore, line, &result) != 0)
+            continue;
+        if (!result.matched)
+            continue;
+
+        const char *pattern_raw =
+            src->filter.patterns[result.pattern_index].raw;
+
+        char status[128];
+        DbEntry *e = db_find(state, result.ip);
+        if (e != NULL && e->active) {
+            snprintf(status, sizeof(status), "banned since %s  [%s]",
+                     e->timestamp, e->source);
+        } else if (result.already_banned) {
+            snprintf(status, sizeof(status), "banned (in filter)");
+        } else {
+            int hits      = result.hit_count;
+            int threshold = src->filter.maxretry;
+            snprintf(status, sizeof(status),
+                     "not banned (%d hit%s, threshold %d)",
+                     hits, hits == 1 ? "" : "s", threshold);
+        }
+
+        snprintf(response, resp_len,
+                 "match:   [%s]  %s\n"
+                 "pattern: %s\n"
+                 "status:  %s\n",
+                 src->name, result.ip, pattern_raw, status);
+        return;
+    }
+
+    snprintf(response, resp_len,
+             "no match: line did not match any configured failregex pattern\n");
+}
+
 /*
  * process_fw_rule_ips - Update db and filter for IPs that fw_reconcile found
  * are covered by Firewalla individual block rules. Those IPs have already been
@@ -985,6 +1038,12 @@ static void handle_client_connection(DaemonState *state, int client_fd)
             snprintf(response, MAX_RESPONSE_LEN,
                      "ERROR: failed to unban %s\n", ip);
 
+    } else if (strncmp(cmd, "isbanned ", 9) == 0) {
+        handle_client_isbanned(state, cmd + 9, response, MAX_RESPONSE_LEN);
+
+    } else if (strncmp(cmd, "testline ", 9) == 0) {
+        handle_client_testline(state, cmd + 9, response, MAX_RESPONSE_LEN);
+
     } else if (strcmp(cmd, "reload") == 0) {
         g_reload_requested = 1;
         snprintf(response, MAX_RESPONSE_LEN, "OK: reload requested\n");
@@ -1006,7 +1065,8 @@ static void handle_client_connection(DaemonState *state, int client_fd)
         snprintf(response, MAX_RESPONSE_LEN,
                  "ERROR: unknown command '%s'\n"
                  "Commands: status, banned, pending, rules, "
-                 "ban <ip>, unban <ip>, reload\n", cmd);
+                 "ban <ip>, unban <ip>, isbanned <ip>, testline <line>, reload\n",
+                 cmd);
     }
 
     /* Send response */
